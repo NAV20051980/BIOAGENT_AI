@@ -1,0 +1,44 @@
+# Environment / secrets
+.env
+.env.*
+*.env
+
+# Python
+venv/
+.venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+bioagent.db
+
+# macOS
+.DS_Store
+
+# IDE & Editor
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+*.swo
+
+# Node
+node_modules/
+
+# Logs & Temporary Files
+*.log
+*.tar.gz
+*.zip
+
+# Arduino / Firmware build artifacts
+*.hex
+*.bin
+*.elf
