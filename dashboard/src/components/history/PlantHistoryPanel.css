@@ -1,0 +1,228 @@
+.history-panel {
+  display: flex;
+  flex-direction: column;
+  /* CHANGED: Added 16px left padding so the timeline dots are no longer cut off */
+  padding: 0 8px 32px 16px; 
+  min-height: 100%;
+}
+
+.history-panel__context {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.history-panel__context-illustration {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--color-surface-soft);
+  border: 1px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.history-panel__plant-name {
+  font-family: var(--font-display);
+  font-size: 20px;
+  color: var(--color-text-primary);
+  margin-bottom: 2px;
+}
+
+.history-panel__plant-common {
+  font-size: 12px;
+  font-style: italic;
+  color: var(--color-text-secondary);
+}
+
+.history-panel__context-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+
+.history-panel__context-stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  padding: 5px 12px;
+}
+
+.history-panel__context-stat svg {
+  color: var(--color-text-secondary);
+}
+
+.history-panel__header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+
+.history-panel__eyebrow {
+  font-family: var(--font-display);
+  font-size: 15px;
+  color: var(--color-text-secondary);
+}
+
+.history-panel__current {
+  font-size: 12.5px;
+  color: var(--color-text-secondary);
+}
+
+.history-panel__current strong {
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.history-panel__current-decision {
+  display: inline-block;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  color: var(--color-surface);
+  background: var(--color-text-secondary);
+}
+
+.history-panel__current-decision--water {
+  background: var(--color-action);
+}
+
+.history-panel__timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  padding-left: 22px;
+  /* CHANGED: Pushed the timeline line inward slightly to ensure the dots have room */
+  margin-left: 12px; 
+  border-left: 2px solid var(--color-border);
+}
+
+.history-panel__entry {
+  position: relative;
+  display: flex;
+  gap: 14px;
+  flex-shrink: 0;
+}
+
+.history-panel__dot {
+  position: absolute;
+  left: -33px;
+  top: 1px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-surface);
+  background: var(--color-text-secondary);
+  border: 2px solid var(--color-surface);
+}
+
+.history-panel__entry--watered .history-panel__dot {
+  background: var(--color-action);
+}
+
+.history-panel__entry--monitoring .history-panel__dot {
+  background: var(--color-action);
+}
+
+.history-panel__entry-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.history-panel__entry-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 6px;
+}
+
+.history-panel__entry-time {
+  font-size: 11.5px;
+  color: var(--color-text-secondary);
+}
+
+.history-panel__entry-title {
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.history-panel__entry-reason {
+  font-size: 12.5px;
+  color: var(--color-text-secondary);
+  line-height: 1.5;
+  margin-bottom: 12px;
+}
+
+.history-panel__entry-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.history-panel__entry-meta span {
+  font-size: 10.5px;
+  color: var(--color-text-secondary);
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  padding: 4px 10px;
+}
+
+.history-panel__empty {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+/* =======================================================
+   THE BIOLENS FLOATING BUTTON FIX 
+   ======================================================= */
+.history-panel__scan-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 24px;
+  padding: 11px 20px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border);
+  
+  /* CHANGED: This aligns the button to the right where you drew the red circle */
+  align-self: flex-end; 
+  
+  /* CHANGED: This locks the button to the bottom so it hovers above the scrolling history */
+  position: sticky;
+  bottom: 16px;
+  z-index: 50; 
+  
+  /* Semi-transparent background with blur so the scrolling text behind it looks premium */
+  background: rgba(250, 249, 246, 0.95);
+  backdrop-filter: blur(8px);
+  box-shadow: 0 8px 24px rgba(44, 53, 37, 0.12);
+  transition: all 0.2s ease;
+}
+
+.history-panel__scan-link:hover {
+  border-color: var(--color-text-secondary);
+  transform: translateY(-2px);
+  box-shadow: 0 12px 28px rgba(44, 53, 37, 0.18);
+}

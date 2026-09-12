@@ -1,0 +1,187 @@
+.analysis-panel {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch; 
+  width: 100%;
+  height: 100%;
+  padding: 0; 
+  box-sizing: border-box;
+}
+
+/* --- TOP SECTION --- */
+.analysis-panel__top {
+  flex: 0 0 auto; 
+  display: flex;
+  flex-direction: column;
+  align-items: stretch; 
+  width: 100%; 
+  padding-bottom: 24px;
+}
+
+/* The Joined Outer Card */
+.analysis-panel__top-card {
+  width: 100%; 
+  background: var(--color-surface);
+  border-radius: var(--radius-md);
+  border-top: 3px solid var(--color-text-secondary);
+  box-shadow: 0 4px 12px rgba(44, 53, 37, 0.04);
+  display: flex;
+  flex-direction: column;
+}
+
+.analysis-panel__top-card--water {
+  border-top-color: var(--color-action);
+}
+
+/* The Top Half (Decision) */
+.analysis-panel__decision {
+  flex: 1; 
+  padding: 16px 20px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center; 
+}
+
+.analysis-panel__decision-label {
+  display: block;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 2px;
+}
+
+.analysis-panel__decision-value {
+  display: block;
+  font-family: var(--font-display);
+  font-size: 24px;
+  color: var(--color-text-primary);
+  margin-bottom: 4px;
+}
+
+.analysis-panel__decision-reason {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2; 
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Sub-Divider inside the Card */
+.analysis-panel__card-divider {
+  width: 100%; 
+  height: 1px;
+  background: var(--color-border);
+  margin: 0;
+}
+
+/* The Bottom Half (Stats) */
+.analysis-panel__stats {
+  flex: 1; 
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 20px;
+  width: 100%;
+}
+
+.analysis-panel__stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 14px;
+  background: transparent;
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+}
+
+.analysis-panel__stat-label {
+  font-size: 10px;
+  color: var(--color-text-secondary);
+}
+
+.analysis-panel__stat-value {
+  font-family: var(--font-display);
+  font-size: 14px;
+  color: var(--color-text-primary);
+}
+
+/* --- HORIZONTAL DIVIDER --- */
+.analysis-panel__divider {
+  /* Matches the width of the shrunken left-aligned cards */
+  width: 88%; 
+  height: 1px;
+  background: var(--color-border);
+  margin: 0; 
+  flex-shrink: 0;
+}
+
+/* --- BOTTOM SECTION (GRAPHS) --- */
+.analysis-panel__bottom {
+  flex: 1; 
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start; 
+  /* Matches the top card width */
+  width: 88%; 
+  padding-top: 24px;
+  min-height: 0; 
+}
+
+.analysis-panel__graphs {
+  display: grid;
+  grid-template-rows: 1fr 1fr; 
+  gap: 16px;
+  width: 100%; 
+  height: 100%; 
+}
+
+.analysis-panel__graph-container {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start; 
+  width: 100%;
+  height: 100%;
+  min-height: 0; 
+}
+
+.analysis-panel__graph-title {
+  font-family: var(--font-display);
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  margin-bottom: 8px;
+  flex: 0 0 auto;
+}
+
+.analysis-panel__graph-placeholder {
+  width: 100%;
+  flex: 1;
+  min-height: 0;
+  height: 120px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px;
+  box-shadow: inset 0 2px 4px rgba(44, 53, 37, 0.02);
+}
+
+.analysis-panel__graph-svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.analysis-panel__graph-grid line {
+  stroke: var(--color-border);
+  stroke-width: 0.5;
+  stroke-dasharray: 2 2; 
+}

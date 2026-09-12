@@ -1,0 +1,281 @@
+.inventory-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%; 
+  box-sizing: border-box;
+}
+
+.inventory-panel__header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.inventory-panel__title {
+  font-family: var(--font-display, "Fraunces", serif);
+  font-size: 22px;
+  color: var(--color-text-primary, #2a2a20);
+  margin: 0;
+}
+
+.inventory-panel__count {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-olive, #6e7a4e);
+  background: var(--color-cream, #faf5e9);
+  border: 1px solid var(--color-border, #e1d5b8);
+  padding: 3px 8px;
+  border-radius: 999px;
+}
+
+.inventory-panel__body {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  flex: 1;
+}
+
+.inventory-panel__eyebrow {
+  font-family: var(--font-display, "Fraunces", serif);
+  font-size: 13px;
+  color: var(--color-text-secondary, #6b6350);
+  margin: 0 0 10px 0;
+  letter-spacing: 0.2px;
+}
+
+/* Spotlight Card for Selected Plant */
+.inventory-panel__spotlight {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  background: var(--color-surface, #fffdf8);
+  border: 1.5px solid #2e7d32;
+  border-radius: var(--radius-md, 16px);
+  box-shadow: 0 4px 16px rgba(46, 125, 50, 0.08);
+  box-sizing: border-box;
+}
+
+.inventory-panel__spotlight-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.inventory-panel__active-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #ffffff;
+  background: #2e7d32;
+  padding: 3px 8px;
+  border-radius: 999px;
+}
+
+.inventory-panel__spotlight-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.inventory-panel__illustration {
+  width: 52px;
+  height: 52px;
+  border-radius: 12px;
+  background: var(--color-cream, #faf5e9);
+  border: 1px solid var(--color-border, #e1d5b8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.inventory-panel__plant-name {
+  font-family: var(--font-display, "Fraunces", serif);
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--color-botanical, #35462e);
+  margin: 0;
+}
+
+.inventory-panel__plant-common-name {
+  font-size: 11.5px;
+  font-style: italic;
+  color: var(--color-text-secondary, #6b6350);
+  margin: 2px 0 0 0;
+}
+
+.inventory-panel__facts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  width: 100%;
+}
+
+.inventory-panel__fact {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  background: var(--color-cream, #faf5e9);
+  border: 1px solid var(--color-border, #e1d5b8);
+  border-radius: 8px;
+}
+
+.inventory-panel__fact span {
+  font-size: 10px;
+  color: var(--color-text-secondary, #6b6350);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.inventory-panel__fact strong {
+  font-family: var(--font-mono, monospace);
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--color-text-primary, #2a2a20);
+}
+
+/* Plants Grid */
+.inventory-panel__grid-area {
+  display: flex;
+  flex-direction: column;
+}
+
+.inventory-panel__grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+
+.inventory-panel__card {
+  position: relative;
+  background: var(--color-surface, #fffdf8);
+  border: 1.5px solid var(--color-border, #e1d5b8);
+  border-radius: var(--radius-md, 12px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+  padding: 14px 8px 10px;
+  transition: all 0.2s ease;
+  min-height: 100px;
+}
+
+.inventory-panel__card:hover {
+  border-color: var(--color-olive, #6e7a4e);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(44, 53, 37, 0.06);
+}
+
+.inventory-panel__card--selected {
+  background: var(--color-surface, #fffdf8);
+  border-color: #2e7d32 !important;
+  border-width: 2px !important;
+  box-shadow: 0 4px 16px rgba(46, 125, 50, 0.15) !important;
+}
+
+.inventory-panel__card-active-tag {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 8.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  background: #2e7d32;
+  color: #ffffff;
+  padding: 2px 6px;
+  border-radius: 999px;
+}
+
+.inventory-panel__card-name {
+  font-family: var(--font-display, "Fraunces", serif);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary, #2a2a20);
+  text-align: center;
+}
+
+.inventory-panel__card--selected .inventory-panel__card-name {
+  color: var(--color-botanical, #35462e);
+  font-weight: 700;
+}
+
+.inventory-panel__card-moisture {
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  color: var(--color-olive, #6e7a4e);
+}
+
+/* Empty State */
+.inventory-panel__empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 16px;
+  text-align: center;
+  background: var(--color-cream, #faf5e9);
+  border: 1px dashed var(--color-border, #e1d5b8);
+  border-radius: var(--radius-md, 14px);
+  gap: 12px;
+}
+
+.inventory-panel__empty-icon {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: var(--color-surface, #fffdf8);
+  border: 1px solid var(--color-border, #e1d5b8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.inventory-panel__empty-text {
+  font-size: 13px;
+  color: var(--color-text-secondary, #6b6350);
+  margin: 0;
+  max-width: 220px;
+  line-height: 1.5;
+}
+
+.inventory-panel__add-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--color-botanical, #35462e);
+  color: #ffffff;
+  padding: 8px 16px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: all 0.2s ease;
+  margin-top: 4px;
+}
+
+.inventory-panel__add-btn:hover {
+  background: #25331f;
+  transform: translateY(-1px);
+}
+
+.inventory-panel__loading {
+  padding: 24px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--color-text-secondary, #6b6350);
+}

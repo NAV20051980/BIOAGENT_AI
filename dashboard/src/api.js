@@ -1,155 +1,153 @@
 /**
- * BioAgent AI API Client
- * Centralized API service with debug logging and latency tracking.
+ * BioAgent AI — api.js / api.ts
+ * Centralized API client for communicating with the FastAPI backend.
  */
 
-let apiBaseUrl = (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_API_BASE_URL)
-  ? import.meta.env.VITE_API_BASE_URL.replace(/\/$/, '')
-  : 'http://localhost:8000';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
-let debugListeners = [];
-
-export function setApiBaseUrl(url) {
-  apiBaseUrl = (url || 'http://localhost:8000').replace(/\/$/, '');
+/**
+ * Returns active authentication token from localStorage
+ */
+export function getToken() {
+  return localStorage.getItem('auth_token') || localStorage.getItem('bioagent_token') || null;
 }
 
-export function getApiBaseUrl() {
-  return apiBaseUrl;
-}
+/**
+ * Generic fetch wrapper with automatic JWT injection and 401 interception
+ */
+export async function request(endpoint, options = {}) {
+  const url = `${API_BASE_URL}${endpoint}`;
+  const headers = { ...(options.headers || {}) };
 
-export function onDebugLog(callback) {
-  debugListeners.push(callback);
-  return () => {
-    debugListeners = debugListeners.filter(cb => cb !== callback);
-  };
-}
-
-function notifyDebug(entry) {
-  debugListeners.forEach(cb => {
-    try {
-      cb(entry);
-    } catch (e) {
-      console.error('Debug listener error:', e);
-    }
-  });
-}
-
-async function apiRequest(endpoint, options = {}) {
-  const url = `${apiBaseUrl}${endpoint}`;
-  const startTime = performance.now();
-  const method = options.method || 'GET';
-  let requestBody = null;
-
-  if (options.body) {
-    if (typeof options.body === 'string') {
-      try {
-        requestBody = JSON.parse(options.body);
-      } catch {
-        requestBody = options.body;
-      }
-    } else if (options.body instanceof FormData) {
-      requestBody = '[Multipart FormData File Upload]';
-    } else {
-      requestBody = options.body;
-    }
+  const token = getToken();
+  if (token && !headers['Authorization']) {
+    headers['Authorization'] = `Bearer ${token}`;
   }
 
   try {
-    const response = await fetch(url, options);
-    const latency = Math.round(performance.now() - startTime);
-    let data;
-    const contentType = response.headers.get('content-type') || '';
-    if (contentType.includes('application/json')) {
-      data = await response.json();
-    } else {
-      data = await response.text();
+    const res = await fetch(url, { ...options, headers });
+    if (!res.ok) {
+      if (res.status === 401) {
+        // Clear invalid or expired session tokens
+        localStorage.removeItem('auth_token');
+        localStorage.removeItem('bioagent_token');
+        localStorage.removeItem('bioagent_user');
+        if (window.location.pathname !== '/login' && window.location.pathname !== '/' && window.location.pathname !== '/demo') {
+          window.location.href = '/login';
+        }
+      }
+
+      let message = `HTTP ${res.status} ${res.statusText}`;
+      try {
+        const errJson = await res.json();
+        if (errJson && errJson.detail) {
+          message = typeof errJson.detail === 'string' ? errJson.detail : JSON.stringify(errJson.detail);
+        } else if (errJson && errJson.message) {
+          message = errJson.message;
+        }
+      } catch {
+        const text = await res.text();
+        if (text) message = text;
+      }
+      throw new Error(`Request to ${endpoint} failed: ${message}`);
     }
-
-    const debugEntry = {
-      timestamp: new Date().toISOString(),
-      endpoint,
-      url,
-      method,
-      status: response.status,
-      ok: response.ok,
-      latencyMs: latency,
-      requestPayload: requestBody,
-      responsePayload: data,
-      error: response.ok ? null : `HTTP ${response.status}: ${typeof data === 'string' ? data : JSON.stringify(data)}`
-    };
-    notifyDebug(debugEntry);
-
-    if (!response.ok) {
-      throw new Error(`API error (${response.status}): ${typeof data === 'string' ? data : JSON.stringify(data)}`);
-    }
-
-    return { ok: true, data, status: response.status, latencyMs: latency };
+    return await res.json();
   } catch (err) {
-    const latency = Math.round(performance.now() - startTime);
-    const debugEntry = {
-      timestamp: new Date().toISOString(),
-      endpoint,
-      url,
-      method,
-      status: 0,
-      ok: false,
-      latencyMs: latency,
-      requestPayload: requestBody,
-      responsePayload: null,
-      error: err.message || 'Network / Connection Error'
-    };
-    notifyDebug(debugEntry);
-    return { ok: false, error: err.message || 'Network Error', latencyMs: latency };
+    if (err.name === 'TypeError' && err.message.includes('fetch')) {
+      throw new Error(`Backend offline or unreachable at ${API_BASE_URL}`);
+    }
+    throw err;
   }
 }
 
-export async function fetchStatus() {
-  return apiRequest('/status');
+/**
+ * Status & Health
+ */
+export async function getStatus() {
+  return await request('/status');
 }
 
-export async function fetchLatestDecision() {
-  return apiRequest('/latest-decision');
+/**
+ * Active Reasoning Plant Profile
+ */
+export async function getPlantProfile() {
+  return await request('/plant-profile');
 }
 
-export async function fetchHistory(limit = 30) {
-  return apiRequest(`/history?limit=${limit}`);
-}
-
-export async function fetchWeather() {
-  return apiRequest('/weather');
-}
-
-export async function fetchPlantProfile() {
-  return apiRequest('/plant-profile');
-}
-
-export async function identifyPlant(fileOrBlob) {
-  const formData = new FormData();
-  formData.append('file', fileOrBlob, 'plant_photo.jpg');
-
-  return apiRequest('/identify-plant', {
-    method: 'POST',
-    body: formData,
-  });
-}
-
-export async function sendTelemetry(telemetryData) {
-  return apiRequest('/telemetry', {
+/**
+ * Telemetry Ingestion & AI Decision
+ */
+export async function sendTelemetry(payload) {
+  return await request('/telemetry', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({
-      soil_moisture_pct: Number(telemetryData.soil_moisture_pct),
-      temperature_c: Number(telemetryData.temperature_c),
-      humidity_pct: Number(telemetryData.humidity_pct),
-      device_id: telemetryData.device_id || 'esp32-01',
+      device_id: payload.device_id || 'esp32-01',
+      soil_moisture_pct: Number(payload.soil_moisture_pct),
+      temperature_c: Number(payload.temperature_c),
+      humidity_pct: Number(payload.humidity_pct),
     }),
   });
 }
 
-export async function setWeatherScenario(scenario) {
-  return apiRequest('/demo/weather-scenario', {
+/**
+ * Manual Pump Activation Relay Trigger
+ */
+export async function activatePump(payload = {}) {
+  return await request('/pump/activate', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      duration_sec: payload.duration_sec ?? 5,
+      reason: payload.reason || 'Manual pump activation requested via dashboard',
+      plant_id: payload.plant_id ?? null,
+      soil_moisture: payload.soil_moisture ?? null,
+    }),
+  });
+}
+
+/**
+ * Plant Identification via Image Upload
+ */
+export async function identifyPlant(file) {
+  const formData = new FormData();
+  formData.append('file', file);
+  return await request('/identify-plant', {
+    method: 'POST',
+    body: formData,
+  });
+}
+
+/**
+ * Weather Forecast
+ */
+export async function getWeather() {
+  return await request('/weather');
+}
+
+/**
+ * Latest Decision Log
+ */
+export async function getLatestDecision() {
+  return await request('/latest-decision');
+}
+
+/**
+ * Historical Decision Logs
+ */
+export async function getHistory(limit = 20) {
+  return await request(`/history?limit=${limit}`);
+}
+
+/**
+ * Weather Scenario Override for Live Demonstrations
+ */
+export async function setDemoWeatherScenario(scenario) {
+  return await request('/demo/weather-scenario', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -157,3 +155,54 @@ export async function setWeatherScenario(scenario) {
     body: JSON.stringify({ scenario }),
   });
 }
+
+/**
+ * Authentication Endpoints
+ */
+export async function loginUser(username, password) {
+  return await request('/auth/login', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ username, password }),
+  });
+}
+
+export async function signupUser(username, email, password) {
+  return await request('/auth/signup', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ username, email, password }),
+  });
+}
+
+export async function verifyAuthToken(token) {
+  return await request('/auth/verify', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ token }),
+  });
+}
+
+/**
+ * Per-User Plant List & History
+ */
+export async function getUserPlants() {
+  return await request('/user-plants');
+}
+
+export async function getUserIrrigationHistory(limit = 50) {
+  return await request(`/irrigation-history?limit=${limit}`);
+}
+
+export async function getTelemetryHistory(limit = 24) {
+  return await request(`/telemetry-history?limit=${limit}`);
+}
+
+export { API_BASE_URL };

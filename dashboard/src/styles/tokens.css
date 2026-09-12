@@ -1,0 +1,187 @@
+:root {
+  /* ================================
+     FOUNDATION — LIGHT EDITORIAL
+     ================================ */
+
+  --color-canvas: #f0f2f5;
+  --color-background: #f0f2f5;
+
+  --color-surface: #FCFAF3;
+  --color-surface-soft: #EAE6D9;
+  --color-surface-white: #FFFFFF;
+
+  --color-sand: #D5D1C4;
+
+
+  /* ================================
+     DARK / DEEP FOUNDATION
+     ================================ */
+
+  --color-ink: #20251F;
+  --color-ink-deep: #151B17;
+  --color-charcoal: #202923;
+  --color-forest-dark: #102B1E;
+
+  --color-dark-surface: #1B261F;
+  --color-dark-surface-soft: #26342B;
+  --color-dark-border: #3A483E;
+
+
+  /* ================================
+     PLANT / LIFE
+     ================================ */
+
+  --color-forest: #244B35;
+  --color-botanical: #527A5A;
+  --color-sage: #7FA07B;
+  --color-pale-sage: #DCE6D8;
+
+  --color-green-deep: #123D28;
+  --color-green-vivid: #42BD5A;
+  --color-green-bright: #6BE77E;
+
+
+  /* ================================
+     WATER / ENVIRONMENT
+     ================================ */
+
+  --color-deep-teal: #285F5B;
+  --color-teal: #4D8C83;
+  --color-mist: #D5E5E1;
+
+  --color-ocean-deep: #123D40;
+  --color-water-dark: #07545A;
+  --color-water-vivid: #24C8C0;
+  --color-water-bright: #5BE4DA;
+
+
+  /* ================================
+     ACTION / ENERGY
+     ================================ */
+
+  --color-burnt-sienna: #B85C32;
+  --color-terracotta: #D47A4A;
+  --color-peach-clay: #EBC6AF;
+  --color-pale-clay: #F6E8DE;
+
+  --color-orange-deep: #7D3D18;
+  --color-orange-vivid: #E87824;
+  --color-orange-bright: #FF9700;
+
+
+  /* ================================
+     EARTH / SOIL
+     ================================ */
+
+  --color-walnut: #503725;
+  --color-earth: #76533A;
+  --color-earth-sand: #D9C8B4;
+
+  --color-soil-deep: #24150F;
+  --color-soil-dark: #382016;
+  --color-soil-rich: #5A3825;
+
+
+  /* ================================
+     TEXT
+     ================================ */
+
+  --color-text-primary: #20251F;
+  --color-text-secondary: #596057;
+  --color-text-muted: #7F857D;
+
+  --color-text-light: #F3F0E7;
+  --color-text-light-secondary: #C8CEC8;
+  --color-text-light-muted: #8D988F;
+
+
+  /* ================================
+     BORDERS (High Contrast Setup)
+     ================================ */
+
+  --color-border: #C8C4B6;           /* Darker, highly visible stone border */
+  --color-border-strong: #9E998B;    /* Crisp definition border */
+  --color-border-dark: #3A483E;
+
+
+  /* ================================
+     GRADIENTS — LIGHT
+     ================================ */
+
+  --gradient-background:
+    linear-gradient(145deg, #F3F0E7 0%, #E2DDD0 100%);
+
+  --gradient-surface:
+    linear-gradient(135deg, #FCFAF3 0%, #E6E1D2 100%);
+
+  --gradient-botanical:
+    linear-gradient(135deg, #527A5A 0%, #244B35 100%);
+
+  --gradient-teal:
+    linear-gradient(135deg, #4D8C83 0%, #285F5B 100%);
+
+  --gradient-action:
+    linear-gradient(135deg, #D47A4A 0%, #B85C32 100%);
+
+  --gradient-earth:
+    linear-gradient(135deg, #76533A 0%, #503725 100%);
+
+
+  /* ================================
+     SHADOWS (Enhanced Card Separation)
+     ================================ */
+
+  --shadow-soft:
+    0 6px 24px rgba(32, 37, 31, 0.12), 0 0 0 1px #C8C4B6;
+
+  --shadow-elevated:
+    0 16px 40px rgba(32, 37, 31, 0.18), 0 0 0 2px #244B35;
+
+  --shadow-floating:
+    0 24px 60px rgba(32, 37, 31, 0.22);
+
+
+  /* ================================
+     RADIUS
+     ================================ */
+
+  --radius-sm: 10px;
+  --radius-md: 16px;
+  --radius-lg: 24px;
+  --radius-xl: 34px;
+  --radius-hero: 40px;
+
+
+  /* ================================
+     TYPOGRAPHY
+     ================================ */
+
+  --font-display: 'Inter', system-ui, sans-serif;
+  --font-body: 'Inter', system-ui, sans-serif;
+
+
+  /* ================================
+     LAYOUT
+     ================================ */
+
+  --sidebar-width: 96px;
+
+
+  /* ================================
+     COMPATIBILITY ALIASES
+     Components still reference these older
+     role names. Mapped onto the palette above
+     so nothing else has to change. Adjust the
+     mapping here if a different shade is wanted.
+     ================================ */
+
+  --color-cream: var(--color-surface);
+  --color-gold: var(--color-terracotta);
+  --color-olive: var(--color-forest);
+  --color-accent: var(--color-burnt-sienna);
+  --color-brown: #c4a484;
+  --color-blue: #6b9ac4;
+  --color-action: var(--color-orange-vivid);
+  --color-primary: var(--color-forest);
+  --color-surface-subtle: var(--color-surface-soft);
+}

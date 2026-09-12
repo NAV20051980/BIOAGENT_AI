@@ -1,0 +1,66 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap');
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Inter', sans-serif;
+  --font-mono: 'JetBrains Mono', monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background: #e8d5a3;
+  color: #2d1f0e;
+  font-family: 'Inter', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #d4b87a; border-radius: 2px; }
+::-webkit-scrollbar-thumb:hover { background: #b87a2a; }
+
+.card {
+  background: #f7f0de;
+  border: 1px solid #d4b87a;
+  border-radius: 16px;
+  box-shadow: 0 2px 12px #c8922a12, 0 1px 3px #b87a2a10;
+}
+
+.card-accent {
+  background: linear-gradient(135deg, #f7f0de, #f0e4c4);
+  border: 1.5px solid #c8a45a;
+  border-radius: 16px;
+  box-shadow: 0 4px 20px #c8922a18;
+}
+
+.badge-online {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  background: #5a8a3a18;
+  border: 1px solid #5a8a3a35;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #3a6a1a;
+  letter-spacing: 0.05em;
+}
+
+.badge-online::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  background: #5a8a3a;
+  border-radius: 50%;
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(0.8); }
+}

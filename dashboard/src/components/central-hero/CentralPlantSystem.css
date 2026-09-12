@@ -1,0 +1,131 @@
+/* CentralPlantSystem.css — Botanical Active Plant Card */
+
+.central-plant-card {
+  background: var(--color-surface, #fffdf8);
+  border: 1px solid var(--color-border, #e1d5b8);
+  border-radius: var(--radius-md, 16px);
+  padding: 20px;
+  box-shadow: var(--shadow-soft, 0 2px 8px rgba(44, 53, 37, 0.04));
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+.central-plant-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.central-plant-card__badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-botanical, #35462e);
+  background: var(--color-surface-soft, rgba(110, 122, 78, 0.12));
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border, #e1d5b8);
+}
+
+.central-plant-card__status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #2e7d32;
+}
+
+.central-plant-card__identity {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.central-plant-card__illustration-wrap {
+  width: 58px;
+  height: 58px;
+  border-radius: 14px;
+  background: var(--color-cream, #faf5e9);
+  border: 1px solid var(--color-border, #e1d5b8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.03);
+}
+
+.central-plant-card__titles {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.central-plant-card__name {
+  font-family: var(--font-display, 'Fraunces', serif);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--color-botanical, #35462e);
+  margin: 0;
+  line-height: 1.2;
+}
+
+.central-plant-card__scientific {
+  font-size: 12px;
+  font-style: italic;
+  color: var(--color-text-secondary, #6b6350);
+  margin: 0;
+}
+
+.central-plant-card__stage {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--color-olive, #6e7a4e);
+  margin-top: 2px;
+}
+
+.central-plant-card__desc {
+  font-size: 12.5px;
+  color: var(--color-text-secondary, #6b6350);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.central-plant-card__specs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--color-border, #e1d5b8);
+}
+
+.central-plant-spec {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  background: var(--color-cream, #faf5e9);
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border, #e1d5b8);
+}
+
+.central-plant-spec__label {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--color-text-secondary, #6b6350);
+}
+
+.central-plant-spec__val {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--color-text-primary, #2a2a20);
+}

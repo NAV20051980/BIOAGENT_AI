@@ -1,0 +1,124 @@
+.about-page {
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  width: 100%;
+  height: 100%;
+  max-height: 100%;
+  box-sizing: border-box;
+  /* Ensures internal vertical scrolling is fully active despite global overflow constraints */
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 1.5rem;
+  -webkit-overflow-scrolling: touch;
+}
+
+.about-page__hero {
+  flex-shrink: 0;
+}
+
+.about-page__hero h1 {
+  font-family: var(--font-display, serif);
+  font-size: 28px;
+  color: var(--color-text-primary, #2c221e);
+  margin-bottom: 6px;
+}
+
+.about-page__hero p {
+  color: var(--color-text-secondary, #605550);
+  font-size: 14px;
+  line-height: 1.5;
+  max-width: 640px;
+}
+
+.about-page__section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  flex-shrink: 0;
+}
+
+.about-page__eyebrow {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--color-text-secondary, #605550);
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.about-page__pipeline {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+@media (min-width: 768px) {
+  .about-page__pipeline {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+  }
+}
+
+.about-page__pipeline-step {
+  background: var(--color-surface-subtle, rgba(255, 255, 255, 0.5));
+  border: 1px solid var(--color-border, #e3dec9);
+  border-radius: var(--radius-md, 12px);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.about-page__pipeline-icon {
+  color: var(--color-primary, #4a5d3f);
+}
+
+.about-page__pipeline-title {
+  font-weight: 600;
+  font-size: 15px;
+  color: var(--color-text-primary, #2c221e);
+}
+
+.about-page__pipeline-detail {
+  font-size: 13px;
+  color: var(--color-text-secondary, #605550);
+  line-height: 1.4;
+}
+
+.about-page__principles {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+
+@media (min-width: 768px) {
+  .about-page__principles {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.about-page__principle {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.about-page__principle-title {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--color-text-primary, #2c221e);
+}
+
+.about-page__principle-detail {
+  font-size: 13px;
+  color: var(--color-text-secondary, #605550);
+  line-height: 1.4;
+}
+
+.about-page__status-text {
+  font-size: 14px;
+  color: var(--color-text-secondary, #605550);
+  line-height: 1.5;
+}

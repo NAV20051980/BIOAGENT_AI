@@ -12,12 +12,18 @@ import requests
 from PIL import Image
 from dotenv import load_dotenv
 load_dotenv()
+_env_path = os.path.join(os.path.dirname(__file__), ".env")
+if os.path.exists(_env_path):
+    load_dotenv(_env_path)
 
 # -------------------------------------------------------------------
-# Configuration – environment variables
+# Configuration – environment variables & deterministic safety gates
 # -------------------------------------------------------------------
 PLANTNET_API_KEY = os.getenv("PLANTNET_API_KEY", "")  # PlantNet API key
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")        # Groq API key (used for care profile)
+
+MIN_CONFIDENCE_THRESHOLD = 0.20
+AMBIGUITY_MARGIN = 0.05
 
 # -------------------------------------------------------------------
 # Generic fallback profile – used when any step fails.
@@ -54,11 +60,12 @@ def _identify_with_plantnet(image_bytes: bytes) -> Dict[str, Any]:
     Returns ``{"species": str, "confidence": float}`` on success.
     On any error returns an empty dict.
     """
-    if not PLANTNET_API_KEY:
+    api_key = os.getenv("PLANTNET_API_KEY", "") or PLANTNET_API_KEY
+    if not api_key:
         return {}
     url = "https://my-api.plantnet.org/v2/identify/all"
     params = {
-        "api-key": PLANTNET_API_KEY,
+        "api-key": api_key,
         "lang": "en",
         "nb-results": 5,
     }
@@ -81,11 +88,12 @@ def _generate_profile_with_groq(species_name: str) -> Dict[str, Any]:
     """Ask Groq to produce a deterministic care profile for *species_name*.
     Returns the full JSON object produced by the model, or an empty dict on failure.
     """
-    if not GROQ_API_KEY:
+    api_key = os.getenv("GROQ_API_KEY", "") or GROQ_API_KEY
+    if not api_key:
         return {}
     endpoint = "https://api.groq.com/openai/v1/chat/completions"
     headers = {
-        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
     system_prompt = (
@@ -125,8 +133,9 @@ def _generate_profile_with_groq(species_name: str) -> Dict[str, Any]:
 # Public API used by FastAPI – preserves the original return shape.
 # -------------------------------------------------------------------
 def identify_plant_from_bytes(image_bytes: bytes) -> dict:
-    """Identify a plant via PlantNet and return a deterministic care profile.
-    Returns dict with keys: species, scientific_name, confidence, raw_label, profile.
+    """Identify a plant via PlantNet and apply a deterministic safety gate.
+    Returns dict with keys: species, scientific_name, confidence, raw_label, profile,
+    profile_activated, identification_status.
     """
     # Step 1 – PlantNet identification (retrieve ranked results)
     plantnet_result = _identify_with_plantnet(image_bytes)
@@ -138,6 +147,8 @@ def identify_plant_from_bytes(image_bytes: bytes) -> dict:
             "confidence": 0.0,
             "raw_label": None,
             "profile": GENERIC_PROFILE,
+            "profile_activated": False,
+            "identification_status": "no_supported_plant",
             "error": "PlantNet identification failed",
         }
 
@@ -157,6 +168,13 @@ def identify_plant_from_bytes(image_bytes: bytes) -> dict:
             "growth_stage": "active vegetative growth",
             "notes": "Prefers high humidity and indirect light.",
         },
+        "Echinocactus grusonii": {
+            "species": "Golden Barrel Cactus",
+            "scientific_name": "Echinocactus grusonii",
+            "ideal_moisture_range_pct": [10, 30],
+            "growth_stage": "mature",
+            "notes": "Desert succulent; highly drought-tolerant; sensitive to overwatering.",
+        },
     }
     # Prefixes for broader groups
     PREFIX_GROUPS = {
@@ -165,6 +183,12 @@ def identify_plant_from_bytes(image_bytes: bytes) -> dict:
             "ideal_moisture_range_pct": [10, 30],
             "growth_stage": "slow",
             "notes": "Drought‑tolerant succulent.",
+        },
+        "Echinocactus": {
+            "species": "Golden Barrel Cactus",
+            "ideal_moisture_range_pct": [10, 30],
+            "growth_stage": "mature",
+            "notes": "Desert succulent; highly drought-tolerant; sensitive to overwatering.",
         },
         "Nephrolepis": {
             "species": "Fern",
@@ -180,38 +204,50 @@ def identify_plant_from_bytes(image_bytes: bytes) -> dict:
         },
     }
 
-    selected = None
-    confidence = 0.0
-    raw_label = None
-    for entry in results:
-        sci_name = entry.get("species", {}).get("scientificNameWithoutAuthor") or entry.get("species", {}).get("scientificName")
-        common = entry.get("species", {}).get("commonName")
-        score = entry.get("score")
-        if not sci_name:
-            continue
-        # Exact match
-        if sci_name in SUPPORTED:
-            selected = SUPPORTED[sci_name]
-            confidence = float(score) if score is not None else 0.0
-            raw_label = sci_name
-            break
-        # Prefix groups
-        for prefix, profile in PREFIX_GROUPS.items():
-            if sci_name.startswith(prefix):
-                selected = profile.copy()
-                selected["scientific_name"] = sci_name
-                confidence = float(score) if score is not None else 0.0
-                raw_label = sci_name
-                break
-        if selected:
-            break
+    def _match_supported(sci: str) -> dict | None:
+        if not sci:
+            return None
+        if sci in SUPPORTED:
+            prof = SUPPORTED[sci].copy()
+            prof.setdefault("scientific_name", sci)
+            return prof
+        for prefix, prof in PREFIX_GROUPS.items():
+            if sci.startswith(prefix):
+                p = prof.copy()
+                p.setdefault("scientific_name", sci)
+                return p
+        return None
 
-    if not selected:
-        # No supported plant found – fallback to Groq for care profile
+    # Step 2 – Filter candidates to ONLY supported catalog entries
+    supported_candidates = []
+    for entry in results:
+        sci_name = (
+            entry.get("species", {}).get("scientificNameWithoutAuthor")
+            or entry.get("species", {}).get("scientificName")
+        )
+        score = float(entry.get("score", 0.0))
+        matched_prof = _match_supported(sci_name)
+        if matched_prof is not None:
+            supported_candidates.append({
+                "entry": entry,
+                "profile": matched_prof,
+                "scientific_name": sci_name,
+                "species": matched_prof.get("species", sci_name),
+                "score": score,
+                "raw_label": sci_name,
+            })
+
+    # Sort supported candidates by score descending
+    supported_candidates.sort(key=lambda c: c["score"], reverse=True)
+
+    # Step 3 – If no supported plant found, preserve fallback to Groq but DO NOT activate profile
+    if not supported_candidates:
         top = results[0]
-        raw_label = top.get("species", {}).get("scientificNameWithoutAuthor") or top.get("species", {}).get("commonName")
+        raw_label = (
+            top.get("species", {}).get("scientificNameWithoutAuthor")
+            or top.get("species", {}).get("commonName")
+        )
         confidence = float(top.get("score", 0.0))
-        # Use Groq to generate profile
         profile = _generate_profile_with_groq(raw_label) or GENERIC_PROFILE
         scientific_name = profile.get("scientific_name")
         return {
@@ -220,19 +256,61 @@ def identify_plant_from_bytes(image_bytes: bytes) -> dict:
             "confidence": round(confidence, 3),
             "raw_label": raw_label,
             "profile": profile,
+            "profile_activated": False,
+            "identification_status": "no_supported_plant",
         }
 
-    # For supported plant, build deterministic profile
-    profile = selected.copy()
-    # Ensure required keys exist
+    # Step 4 – Supported candidate evaluation
+    top_candidate = supported_candidates[0]
+    top_score = top_candidate["score"]
+    raw_label = top_candidate["raw_label"]
+    profile = top_candidate["profile"].copy()
     profile.setdefault("scientific_name", raw_label)
-    profile.setdefault("species", selected.get("species", raw_label))
+    profile.setdefault("species", top_candidate.get("species", raw_label))
+
+    # A) Check confidence threshold
+    if top_score < MIN_CONFIDENCE_THRESHOLD:
+        return {
+            "species": profile["species"],
+            "scientific_name": profile["scientific_name"],
+            "confidence": round(top_score, 3),
+            "raw_label": raw_label,
+            "profile": profile,
+            "profile_activated": False,
+            "identification_status": "low_confidence",
+        }
+
+    # B) Check ambiguity ONLY among supported candidates
+    # Find next competing supported candidate that has a distinct species/profile
+    competing_candidate = None
+    for cand in supported_candidates[1:]:
+        if cand["species"].strip().lower() != top_candidate["species"].strip().lower():
+            competing_candidate = cand
+            break
+
+    if competing_candidate is not None:
+        next_score = competing_candidate["score"]
+        margin = top_score - next_score
+        if margin < AMBIGUITY_MARGIN:
+            return {
+                "species": profile["species"],
+                "scientific_name": profile["scientific_name"],
+                "confidence": round(top_score, 3),
+                "raw_label": raw_label,
+                "profile": profile,
+                "profile_activated": False,
+                "identification_status": "ambiguous",
+            }
+
+    # C) High-confidence supported identification accepted
     return {
         "species": profile["species"],
         "scientific_name": profile["scientific_name"],
-        "confidence": round(confidence, 3),
+        "confidence": round(top_score, 3),
         "raw_label": raw_label,
         "profile": profile,
+        "profile_activated": True,
+        "identification_status": "accepted",
     }
 
 # -------------------------------------------------------------------

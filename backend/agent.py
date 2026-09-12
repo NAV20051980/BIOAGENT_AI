@@ -37,6 +37,8 @@ LAT = float(os.environ.get("BIOAGENT_LAT", "12.9716"))   # default: Bengaluru
 LON = float(os.environ.get("BIOAGENT_LON", "77.5946"))
 
 MAX_PUMP_RUNTIME_SEC = 30  # must match the firmware's hard cap — don't drift from this
+AI_IRRIGATION_COOLDOWN_SEC = 600  # 10 minutes deterministic soaking cooldown
+_last_ai_watered_at = 0.0
 
 DEFAULT_PLANT_PROFILE = {
     "species": "Monstera Deliciosa",
@@ -175,6 +177,22 @@ def _build_prompts(telemetry: dict, weather: dict, history: list) -> tuple[str, 
             "duration_sec": h.get("decision", {}).get("duration_sec", 0),
         })
 
+    weather_unavailable = (
+        weather.get("max_rain_probability_pct") is None
+        or weather.get("expected_rain_mm_24h") is None
+        or bool(weather.get("error"))
+    )
+
+    if weather_unavailable:
+        weather_text = """Weather forecast: UNAVAILABLE (weather API error or unavailable data).
+Do NOT assume 0% rain or 0 mm rainfall."""
+        weather_cite_text = "Weather forecast is UNAVAILABLE."
+    else:
+        weather_text = f"""Weather forecast (next 24h):
+- Max rain probability: {weather.get('max_rain_probability_pct')}%
+- Expected rainfall: {weather.get('expected_rain_mm_24h')} mm"""
+        weather_cite_text = f"Explicitly cite the rain probability ({weather.get('max_rain_probability_pct')}%) and expected rainfall ({weather.get('expected_rain_mm_24h')} mm)."
+
     system_prompt = f"""You are BioAgent AI, an edge-IoT smart agriculture reasoning agent controlling a physical water pump relay.
 Active Plant Profile: {json.dumps(profile)}
 Recent telemetry history (most recent last): {json.dumps(formatted_history)}
@@ -194,6 +212,9 @@ Follow this strict 5-step Decision Hierarchy:
    - CRITICALLY DRY (>15 percentage points below {min_moisture}%): Plant is under acute water stress.
 
 3. Rain Forecast Integration (24h Precipitation):
+   - Weather Forecast Unavailable:
+     * If weather is UNAVAILABLE and soil is Moderately Dry: WITHHOLD WATER (trigger_pump=false, duration_sec=0) waiting for reliable forecast data.
+     * If weather is UNAVAILABLE and soil is Critically Dry: Emergency irrigation is permitted (10-15s) to relieve acute drought stress.
    - High Rain Probability (>= 50% or expected rainfall >= 2.0 mm):
      * If soil is Moderately Dry: WITHHOLD WATER (trigger_pump=false, duration_sec=0) because upcoming natural rainfall is expected soon and will hydrate the soil without wasting water.
      * If soil is Critically Dry: Prefer withholding if significant rain (>= 2.0 mm) is imminent, OR supply a brief emergency irrigation (10-15s) only if expected rainfall is negligible (< 1.0 mm) and insufficient to relieve acute stress.
@@ -202,8 +223,8 @@ Follow this strict 5-step Decision Hierarchy:
 
 4. Explanation & Transparency (reason field):
    - Always state the current soil moisture relative to the plant's ideal range ({min_moisture}% - {max_moisture}%).
-   - Explicitly cite the rain probability ({weather.get('max_rain_probability_pct')}%) and expected rainfall ({weather.get('expected_rain_mm_24h')} mm).
-   - Clearly explain whether water is applied, withheld for rain, or overridden for emergency critical dryness.
+   - {weather_cite_text}
+   - Clearly explain whether water is applied, withheld for rain, withheld for unavailable weather, or overridden for emergency critical dryness.
 
 5. Function Call Requirement:
    - Always call the irrigation_decision function. Never respond with plain text.
@@ -214,9 +235,7 @@ Follow this strict 5-step Decision Hierarchy:
 - Temperature: {telemetry.get('temperature_c')}C
 - Humidity: {telemetry.get('humidity_pct')}%
 
-Weather forecast (next 24h):
-- Max rain probability: {weather.get('max_rain_probability_pct')}%
-- Expected rainfall: {weather.get('expected_rain_mm_24h')} mm
+{weather_text}
 
 Decide whether to irrigate now."""
 
@@ -271,10 +290,69 @@ def decide_irrigation(telemetry: dict, history: list | None = None) -> dict:
         print(f"[agent.py] duration_sec {duration} out of range — clamping.")
         duration = max(0, min(duration, MAX_PUMP_RUNTIME_SEC))
 
+    reason = args.get("reason", "")
+
+    # ---- Deterministic Weather Safety Validator ----
+    # Requirement 3: If weather is unavailable AND the soil is only moderately dry, do NOT trigger irrigation.
+    # Preserve genuinely critical/emergency irrigation.
+    weather_unavailable = (
+        weather.get("max_rain_probability_pct") is None
+        or weather.get("expected_rain_mm_24h") is None
+        or bool(weather.get("error"))
+    )
+
+    profile = get_plant_profile()
+    moisture_range = profile.get("ideal_moisture_range_pct", [40, 60])
+    min_moisture = moisture_range[0] if len(moisture_range) > 0 else 40
+    current_moisture = float(telemetry.get("soil_moisture_pct", 0.0))
+
+    # Moderately dry: below ideal min, but within 15 percentage points of ideal min
+    is_moderately_dry = (current_moisture < min_moisture) and ((min_moisture - current_moisture) <= 15)
+
+    if weather_unavailable and is_moderately_dry:
+        print("[agent.py] Weather unavailable & moderately dry soil — deterministically overriding trigger_pump to False.")
+        trigger = False
+        duration = 0
+        reason = "Irrigation withheld: weather forecast unavailable. Waiting for reliable weather data before non-critical watering."
+
+    # ---- Deterministic Cooldown Safety Validator ----
+    # Enforce a hard 10-minute soaking cooldown between pump activations.
+    if trigger:
+        now = time.time()
+        cooldown_active = False
+
+        # 1. Check history for any pump activation within the last 10 minutes
+        for h in (history or []):
+            ts = h.get("timestamp")
+            if isinstance(ts, (int, float)):
+                ts_sec = ts / 1000.0 if ts > 1e11 else float(ts)
+                if 0 <= (now - ts_sec) < AI_IRRIGATION_COOLDOWN_SEC:
+                    is_watered = False
+                    if isinstance(h.get("decision"), dict):
+                        is_watered = bool(h["decision"].get("trigger_pump"))
+                    elif "trigger_pump" in h:
+                        is_watered = bool(h.get("trigger_pump"))
+                    if is_watered:
+                        cooldown_active = True
+                        break
+
+        # 2. Check in-memory timestamp tracker
+        global _last_ai_watered_at
+        if _last_ai_watered_at > 0 and (now - _last_ai_watered_at) < AI_IRRIGATION_COOLDOWN_SEC:
+            cooldown_active = True
+
+        if cooldown_active:
+            print("[agent.py] Cooldown active — deterministically overriding trigger_pump to False.")
+            trigger = False
+            duration = 0
+            reason = "Irrigation withheld: soaking cooldown active. Awaiting soil moisture equilibration."
+        else:
+            _last_ai_watered_at = now
+
     return {
         "trigger_pump": trigger,
         "duration_sec": duration,
-        "reason": args.get("reason", ""),
+        "reason": reason,
     }
 
 

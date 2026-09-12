@@ -1,0 +1,127 @@
+.moisture-chart-card {
+  width: 100%;
+  background: var(--color-surface, #fffdf8);
+  border: 1px solid var(--color-border, #e1d5b8);
+  border-radius: var(--radius-lg, 16px);
+  padding: 16px 20px;
+  box-shadow: var(--shadow-soft, 0 2px 8px rgba(44, 53, 37, 0.04));
+  margin-top: 16px;
+  box-sizing: border-box;
+}
+
+.moisture-chart__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.moisture-chart__title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.moisture-chart__title {
+  font-family: var(--font-display, "Fraunces", serif);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-botanical, #35462e);
+  margin: 0;
+}
+
+.moisture-chart__badge {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--color-olive, #6e7a4e);
+  background: var(--color-surface-soft, rgba(110, 122, 78, 0.1));
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border, #e1d5b8);
+}
+
+.moisture-chart__legend {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-size: 11px;
+  color: var(--color-text-secondary, #6b6350);
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.legend-line--moisture {
+  width: 14px;
+  height: 3px;
+  background: #94550e;
+  border-radius: 2px;
+}
+
+.legend-rect--ideal {
+  width: 12px;
+  height: 10px;
+  background: rgba(110, 122, 78, 0.2);
+  border: 1px dashed rgba(110, 122, 78, 0.6);
+  border-radius: 2px;
+}
+
+.legend-dot--pump {
+  width: 8px;
+  height: 8px;
+  background: #0958d9;
+  border-radius: 50%;
+}
+
+.moisture-chart__canvas-wrapper {
+  position: relative;
+  width: 100%;
+  height: 120px;
+}
+
+.moisture-chart__svg {
+  width: 100%;
+  height: 100%;
+  overflow: visible;
+}
+
+.moisture-chart__tooltip {
+  position: absolute;
+  transform: translate(-50%, -120%);
+  background: var(--color-surface, #fffdf8);
+  border: 1px solid var(--color-border, #e1d5b8);
+  border-radius: 8px;
+  padding: 6px 10px;
+  box-shadow: 0 4px 14px rgba(44, 53, 37, 0.12);
+  pointer-events: none;
+  font-size: 11px;
+  color: var(--color-text-primary, #2c3525);
+  white-space: nowrap;
+  z-index: 10;
+}
+
+.tooltip-time {
+  font-size: 9.5px;
+  color: var(--color-text-secondary, #6b6350);
+  font-family: var(--font-mono, monospace);
+  margin-bottom: 2px;
+}
+
+.tooltip-moisture strong {
+  color: #94550e;
+}
+
+.tooltip-pump {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #0958d9;
+  font-weight: 600;
+  margin-top: 3px;
+  font-size: 10px;
+}
