@@ -1,28 +1,45 @@
-# Python
-__pycache__/
-*.pyc
-venv/
-env/
-.venv/
-*.egg-info/
-
-# Environment secrets — NEVER commit real API keys
+# Environment / secrets
 .env
-backend/.env
+.env.*
+*.env
+!.env.example
 
-# Database (each dev/demo run generates its own local db)
-*.db
-bioagent.db
-
-# Arduino
-*.hex
+# Python
+venv/
+.venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
 build/
 
-# OS / editor junk
+# Database
+*.db
+*.sqlite
+*.sqlite3
+bioagent.db
+
+# macOS
 .DS_Store
-Thumbs.db
+
+# IDE & Editor
+.idea/
 .vscode/*
 !.vscode/extensions.json
+*.swp
+*.swo
 
-# Logs
+# Node
+node_modules/
+
+# Logs & Temporary Files
 *.log
+*.tar.gz
+*.zip
+
+# Arduino / Firmware build artifacts
+*.hex
+*.bin
+*.elf

@@ -49,17 +49,16 @@
 // WIFI
 // ============================================================
 
-const char* WIFI_SSID = "OnePlus Nord CE4 Lite 5G";
-const char* WIFI_PASSWORD = "navaneet10";
+const char* WIFI_SSID     = "YOUR_WIFI_SSID";
+const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD";
 
 
 // ============================================================
 // FASTAPI BACKEND
 // ============================================================
 
-// MacBook IP obtained from your ifconfig output
-const char* BACKEND_URL =
-  "http://10.162.3.74:8000/telemetry";
+// Replace with your backend server's local IP address
+const char* BACKEND_URL = "http://<YOUR_BACKEND_IP>:8000/telemetry";
 
 
 // ============================================================
