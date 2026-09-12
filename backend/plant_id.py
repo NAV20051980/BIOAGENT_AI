@@ -1,195 +1,226 @@
 """
 BioAgent AI — plant_id.py
-Local, open-source plant species identification from a photo.
+Multimodal Computer Vision plant species identification powered by Groq Vision.
 
-No external API call (no PlantNet/Plant.id key needed) — runs a pretrained
-image classifier locally via torchvision, then maps the recognized label to a
-watering-care profile that feeds into agent.py's reasoning prompt.
+Model: qwen/qwen3.8-27b (multimodal vision-language model)
+Role: Botanical identification and plant profile generation ONLY.
+      This module NEVER controls the physical water pump or relay.
 
-Model weights download once from PyTorch's public model hub the first time
-you run this (needs internet then only) and are cached locally afterwards —
-after that, this runs fully offline.
-
-Usage from main.py:
-    from plant_id import identify_plant_from_bytes
-    result = identify_plant_from_bytes(image_bytes)
-    # result = {"species": ..., "confidence": 0.83, "profile": {...}}
+Flow:
+    Image bytes -> Pillow validation & JPEG conversion -> Base64 data URL
+    -> Groq Vision (qwen/qwen3.8-27b) with strict botanical prompt & JSON schema
+    -> Botanical validation & confidence check (threshold >= 0.50)
+    -> Structured species, confidence, visual evidence & watering profile dict.
 """
 
 import io
-import json
 import os
+import json
+import base64
+from PIL import Image
+from openai import OpenAI
 
-_model = None
-_weights = None
-_categories = None
+# Multimodal vision model on Groq
+VISION_MODEL = os.environ.get("VISION_MODEL", "qwen/qwen3.8-27b")
 
-
-# ------------------------------------------------------------------
-# Care profiles for common houseplants/crops. ImageNet labels that map
-# to a recognized plant get looked up here; anything else falls back to
-# a generic profile. Extend this table as needed — it's the "knowledge"
-# layer on top of the raw classifier output.
-# ------------------------------------------------------------------
-CARE_PROFILES = {
-    "monstera": {
-        "species": "Monstera Deliciosa",
-        "growth_stage": "active vegetative growth",
-        "ideal_moisture_range_pct": [40, 65],
-        "notes": "Prefers evenly moist soil; sensitive to both drought stress and root rot from overwatering.",
-    },
-    "cactus": {
-        "species": "Cactus (generic)",
-        "growth_stage": "mature",
-        "ideal_moisture_range_pct": [10, 25],
-        "notes": "Drought-tolerant; overwatering is far more dangerous than underwatering.",
-    },
-    "fern": {
-        "species": "Fern (generic)",
-        "growth_stage": "mature",
-        "ideal_moisture_range_pct": [50, 75],
-        "notes": "Tropical fern; needs consistently moist soil, dries out and browns quickly if neglected.",
-    },
-    "succulent": {
-        "species": "Succulent (generic)",
-        "growth_stage": "mature",
-        "ideal_moisture_range_pct": [15, 30],
-        "notes": "Stores water in leaves; water sparingly and let soil dry between waterings.",
-    },
-    "daisy": {
-        "species": "Daisy / flowering annual",
-        "growth_stage": "flowering",
-        "ideal_moisture_range_pct": [40, 60],
-        "notes": "Flowering plant; consistent moisture supports blooming, avoid waterlogging.",
-    },
-    "corn": {
-        "species": "Corn / maize",
-        "growth_stage": "vegetative",
-        "ideal_moisture_range_pct": [45, 65],
-        "notes": "Crop plant; moderate consistent watering, sensitive during flowering/tasseling stage.",
-    },
-}
-
-# Maps raw ImageNet class-name fragments -> a CARE_PROFILES key.
-_LABEL_KEYWORDS = {
-    "monstera": "monstera",
-    "cactus": "cactus",
-    "fern": "fern",
-    "succulent": "succulent",
-    "daisy": "daisy",
-    "corn": "corn",
-    "cardoon": "fern",  # ImageNet quirk — leafy plant, closest analog
-    "pot": None,  # "pot" (flowerpot) label — no plant info, ignore
-}
-
+# Safe generic fallback profile
 GENERIC_PROFILE = {
     "species": "Unidentified plant (generic defaults applied)",
     "growth_stage": "unknown",
     "ideal_moisture_range_pct": [35, 60],
-    "notes": "Local classifier did not confidently match a known species — using safe generic watering range.",
+    "notes": "Vision model could not reliably identify the plant with sufficient confidence. Using safe generic watering range.",
 }
 
+CONFIDENCE_THRESHOLD = 0.50
 
-def _load_model():
-    """Lazy-load torchvision's pretrained MobileNetV3 classifier.
-    Downloads weights once (~10MB), then cached under ~/.cache/torch.
+
+def _get_client() -> OpenAI:
+    """Instantiate OpenAI client configured for Groq API."""
+    api_key = os.environ.get("GROQ_API_KEY", "")
+    return OpenAI(api_key=api_key, base_url="https://api.groq.com/openai/v1")
+
+
+def _image_bytes_to_base64_jpeg(image_bytes: bytes, max_dim: int = 1024) -> str:
+    """Validate image bytes using Pillow, resize if large for network efficiency,
+    and return a base64 JPEG data URL.
     """
-    global _model, _weights, _categories
-    if _model is not None:
-        return
-
-    import ssl
-    try:
-        import certifi
-        ssl._create_default_https_context = lambda: ssl.create_default_context(cafile=certifi.where())
-    except Exception:
-        try:
-            ssl._create_default_https_context = ssl._create_unverified_context
-        except Exception:
-            pass
-
-    import torch
-    from torchvision.models import mobilenet_v3_small, MobileNet_V3_Small_Weights
-
-    _weights = MobileNet_V3_Small_Weights.DEFAULT
-    _model = mobilenet_v3_small(weights=_weights)
-    _model.eval()
-    _categories = _weights.meta["categories"]
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    
+    # Scale down if larger than max_dim to keep payload small and fast
+    w, h = img.size
+    if max(w, h) > max_dim:
+        scale = max_dim / float(max(w, h))
+        img = img.resize((int(w * scale), int(h * scale)), Image.Resampling.LANCZOS)
+        
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=85)
+    b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+    return f"data:image/jpeg;base64,{b64}"
 
 
-def _match_profile(label: str) -> dict | None:
-    label_lower = label.lower()
-    for keyword, profile_key in _LABEL_KEYWORDS.items():
-        if keyword in label_lower:
-            if profile_key is None:
-                continue
-            return CARE_PROFILES[profile_key]
-    return None
+def _build_identification_prompt() -> str:
+    return """You are an expert botanical vision AI for smart agriculture.
+Carefully examine this image to identify the plant species.
+
+Examine diagnostic botanical morphological features:
+1. Leaf morphology: Number and arrangement of leaflets (simple vs compound: trifoliate, pinnate, bipinnate, palmate).
+2. Leaf shape, apex, base, margins (entire, crenate, serrate), and venation pattern.
+3. Stem characteristics, thorns/spines, bark, and petioles.
+4. Flowers, buds, or fruits if visible.
+5. Overall plant habit and growth structure.
+
+Specific instructions for Bael (Aegle marmelos / Bilva / Wood Apple):
+- Aegle marmelos is characterized by alternate, trifoliate compound leaves (three leaflets on a common stalk), where lateral leaflets are ovate/elliptic and smaller than the terminal leaflet, with crenulate or entire margins and aromatic citrus glands.
+- CAUTION: Do NOT identify every trifoliate plant as Bael. Differentiate carefully from other trifoliate plants (such as Poncirus/trifoliate orange, poison ivy, clover, Erythrina, or laburnum).
+
+CONSERVATIVE IDENTIFICATION & UNCERTAINTY RULES:
+- If the image is NOT a plant (e.g. human, object, car, interior, abstract graphic), set "is_plant": false.
+- If the image is blurry, partial, poorly lit, or ambiguous such that you cannot reliably determine the species, set "is_plant": false or set "confidence" < 0.50.
+- DO NOT invent or guess a species when uncertain.
+- "confidence" must be a realistic calibrated float between 0.0 and 1.0 based strictly on visual clarity of diagnostic features.
+
+Respond with ONLY a valid JSON object strictly matching this schema:
+{
+  "is_plant": <true or false>,
+  "species": "<Common Name> (<Scientific Name>)",
+  "scientific_name": "<Genus species>",
+  "confidence": <float 0.0 to 1.0>,
+  "visual_evidence": "<detailed botanical morphological evidence observed in the image>",
+  "profile": {
+    "species": "<Common Name> (<Scientific Name>)",
+    "growth_stage": "<seedling / vegetative / mature / flowering>",
+    "ideal_moisture_range_pct": [<min_int>, <max_int>],
+    "notes": "<specific soil type, moisture preferences, drought tolerance, and overwatering sensitivity>"
+  }
+}"""
+
+
+def _validate_profile(profile: dict | None) -> dict:
+    """Ensure the profile dict matches the required shape for agent.py."""
+    if not isinstance(profile, dict):
+        return dict(GENERIC_PROFILE)
+    
+    range_pct = profile.get("ideal_moisture_range_pct")
+    if (
+        not isinstance(range_pct, (list, tuple))
+        or len(range_pct) != 2
+        or not isinstance(range_pct[0], (int, float))
+        or not isinstance(range_pct[1], (int, float))
+        or range_pct[0] >= range_pct[1]
+    ):
+        range_pct = [35, 60]
+    else:
+        # Clamp to reasonable agronomic bounds
+        range_pct = [max(5, int(range_pct[0])), min(95, int(range_pct[1]))]
+
+    return {
+        "species": str(profile.get("species", GENERIC_PROFILE["species"])),
+        "growth_stage": str(profile.get("growth_stage", "vegetative")),
+        "ideal_moisture_range_pct": range_pct,
+        "notes": str(profile.get("notes", GENERIC_PROFILE["notes"])),
+    }
 
 
 def identify_plant_from_bytes(image_bytes: bytes) -> dict:
-    """Run local classification on raw image bytes (e.g. from an uploaded file).
-    Never raises — returns a generic-profile result on any failure so the
-    calling endpoint always gets a usable response.
+    """Run multimodal plant identification on raw image bytes using Groq Vision.
+    Never raises — returns a safe generic profile if classification fails or is uncertain.
     """
     try:
-        import torch
-        from PIL import Image
-
-        _load_model()
-        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-        preprocess = _weights.transforms()
-        batch = preprocess(img).unsqueeze(0)
-
-        with torch.no_grad():
-            logits = _model(batch)
-            probs = torch.nn.functional.softmax(logits[0], dim=0)
-
-        top5_prob, top5_idx = torch.topk(probs, 5)
-
-        # Walk the top-5 predictions and use the first one that maps to a
-        # known plant profile — raw ImageNet top-1 is often a near-miss
-        # (e.g. "vase" instead of "cactus") so checking a few candidates
-        # meaningfully improves real-world hit rate.
-        for prob, idx in zip(top5_prob.tolist(), top5_idx.tolist()):
-            label = _categories[idx]
-            profile = _match_profile(label)
-            if profile:
-                return {
-                    "species": profile["species"],
-                    "confidence": round(prob, 3),
-                    "raw_label": label,
-                    "profile": profile,
-                }
-
-        # Nothing in top-5 matched a known plant keyword.
-        top1_label = _categories[top5_idx[0].item()]
+        data_url = _image_bytes_to_base64_jpeg(image_bytes)
+    except Exception as e:
+        print(f"[plant_id.py] Image decoding/conversion error: {e}")
         return {
             "species": GENERIC_PROFILE["species"],
-            "confidence": round(top5_prob[0].item(), 3),
-            "raw_label": top1_label,
-            "profile": GENERIC_PROFILE,
+            "scientific_name": None,
+            "confidence": 0.0,
+            "visual_evidence": f"Failed to decode image: {e}",
+            "profile": dict(GENERIC_PROFILE),
+            "fallback_triggered": True,
+            "error": "invalid_image_format",
+        }
+
+    try:
+        client = _get_client()
+        prompt = _build_identification_prompt()
+        
+        response = client.chat.completions.create(
+            model=VISION_MODEL,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": data_url}},
+                    ],
+                }
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.1,
+            max_tokens=450,
+        )
+
+        raw_content = response.choices[0].message.content or "{}"
+        data = json.loads(raw_content)
+
+        is_plant = bool(data.get("is_plant", False))
+        confidence = float(data.get("confidence", 0.0))
+        scientific_name = data.get("scientific_name", "")
+        species = data.get("species", "")
+        visual_evidence = data.get("visual_evidence", "")
+
+        # Fallback condition: not a plant, low confidence, or missing species info
+        if (
+            not is_plant
+            or confidence < CONFIDENCE_THRESHOLD
+            or not scientific_name
+            or "unidentified" in species.lower()
+        ):
+            reason_fallback = (
+                "Not identified as a plant"
+                if not is_plant
+                else f"Low confidence ({round(confidence, 2)} < {CONFIDENCE_THRESHOLD}) or ambiguous features"
+            )
+            return {
+                "species": GENERIC_PROFILE["species"],
+                "scientific_name": None,
+                "confidence": round(confidence, 3),
+                "visual_evidence": f"{visual_evidence} [Fallback applied: {reason_fallback}]".strip(),
+                "profile": dict(GENERIC_PROFILE),
+                "fallback_triggered": True,
+            }
+
+        # Validated high-confidence plant identification
+        validated_profile = _validate_profile(data.get("profile"))
+        return {
+            "species": species,
+            "scientific_name": scientific_name,
+            "confidence": round(confidence, 3),
+            "visual_evidence": visual_evidence,
+            "profile": validated_profile,
+            "fallback_triggered": False,
         }
 
     except Exception as e:
-        print(f"[plant_id.py] Local classification failed, using generic profile: {e}")
+        print(f"[plant_id.py] Vision identification failed: {e}")
         return {
             "species": GENERIC_PROFILE["species"],
+            "scientific_name": None,
             "confidence": 0.0,
-            "raw_label": None,
-            "profile": GENERIC_PROFILE,
+            "visual_evidence": f"Vision API error: {e}",
+            "profile": dict(GENERIC_PROFILE),
+            "fallback_triggered": True,
             "error": str(e),
         }
 
 
 if __name__ == "__main__":
     import sys
-
     if len(sys.argv) < 2:
         print("Usage: python plant_id.py <path_to_image>")
         sys.exit(1)
 
     with open(sys.argv[1], "rb") as f:
-        data = f.read()
-    result = identify_plant_from_bytes(data)
-    print(json.dumps(result, indent=2))
+        content = f.read()
+
+    res = identify_plant_from_bytes(content)
+    print(json.dumps(res, indent=2))

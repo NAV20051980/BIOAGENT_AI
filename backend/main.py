@@ -157,9 +157,9 @@ def root():
 
 @app.post("/identify-plant")
 async def identify_plant(file: UploadFile = File(...)):
-    """Upload a photo of the plant once during onboarding. Runs a local
-    image classifier (MobileNetV3), maps the result to a watering-care profile,
-    and sets it as the active profile the Groq reasoning agent uses.
+    """Upload a photo of the plant once during onboarding. Runs Groq Vision
+    (qwen/qwen3.8-27b) for botanical plant identification, sets the resulting
+    care profile as the active profile, and returns the identification details.
     """
     image_bytes = await file.read()
     result = identify_plant_from_bytes(image_bytes)
