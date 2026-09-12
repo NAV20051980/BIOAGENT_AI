@@ -77,18 +77,22 @@ export async function getPlantProfile() {
 /**
  * Telemetry Ingestion & AI Decision
  */
-export async function sendTelemetry(payload) {
+export async function sendTelemetry(payload, weatherOverride = null) {
+  const bodyData = {
+    device_id: payload.device_id || 'esp32-01',
+    soil_moisture_pct: Number(payload.soil_moisture_pct),
+    temperature_c: Number(payload.temperature_c),
+    humidity_pct: Number(payload.humidity_pct),
+  };
+  if (weatherOverride || payload.demo_weather_override) {
+    bodyData.demo_weather_override = weatherOverride || payload.demo_weather_override;
+  }
   return await request('/telemetry', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      device_id: payload.device_id || 'esp32-01',
-      soil_moisture_pct: Number(payload.soil_moisture_pct),
-      temperature_c: Number(payload.temperature_c),
-      humidity_pct: Number(payload.humidity_pct),
-    }),
+    body: JSON.stringify(bodyData),
   });
 }
 
@@ -147,12 +151,13 @@ export async function getHistory(limit = 20) {
  * Weather Scenario Override for Live Demonstrations
  */
 export async function setDemoWeatherScenario(scenario) {
+  const payload = typeof scenario === 'string' ? { scenario } : (scenario || {});
   return await request('/demo/weather-scenario', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ scenario }),
+    body: JSON.stringify(payload),
   });
 }
 

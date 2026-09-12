@@ -118,18 +118,69 @@ def get_weather_forecast() -> dict:
         return {"max_rain_probability_pct": None, "expected_rain_mm_24h": None, "error": str(e)}
 
 
-def force_weather_scenario(scenario: str | None):
-    """Demo helper. Call with 'rain', 'clear', or None (to un-force and use real weather).
-    2B can expose this via a demo-scenario endpoint so the live demo is reliable
-    regardless of what the actual sky is doing on the day.
+def force_weather_scenario(scenario: str | dict | None):
+    """Demo helper. Supports presets ('rain', 'clear', 'storm', 'heatwave', 'cloudy', 'off')
+    or a custom dictionary with keys like condition, max_rain_probability_pct, expected_rain_mm_24h, temperature_c.
     """
     global _forced_weather
-    if scenario == "rain":
-        _forced_weather = {"max_rain_probability_pct": 90.0, "expected_rain_mm_24h": 12.0}
-    elif scenario == "clear":
-        _forced_weather = {"max_rain_probability_pct": 5.0, "expected_rain_mm_24h": 0.0}
-    else:
+    if scenario is None or scenario == "off":
         _forced_weather = None
+    elif isinstance(scenario, dict):
+        prob = float(scenario.get("max_rain_probability_pct", scenario.get("rain_probability_pct", 0.0)))
+        rain_mm = float(scenario.get("expected_rain_mm_24h", scenario.get("expected_rainfall_mm", 0.0)))
+        temp = float(scenario.get("temperature_c", scenario.get("temperature", 24.0))) if (scenario.get("temperature_c") is not None or scenario.get("temperature") is not None) else 24.0
+        cond = scenario.get("condition") or ("Clear / Sunny" if prob < 30 else ("Heavy Thunderstorm" if prob > 85 else "Light Rain"))
+        _forced_weather = {
+            "condition": cond,
+            "max_rain_probability_pct": prob,
+            "expected_rain_mm_24h": rain_mm,
+            "temperature_c": temp,
+            "is_forced": True,
+        }
+    elif isinstance(scenario, str):
+        s_lower = scenario.lower().strip()
+        if "storm" in s_lower or "thunder" in s_lower:
+            _forced_weather = {
+                "condition": "Heavy Thunderstorm",
+                "max_rain_probability_pct": 95.0,
+                "expected_rain_mm_24h": 25.0,
+                "temperature_c": 19.0,
+                "is_forced": True,
+            }
+        elif "rain" in s_lower:
+            _forced_weather = {
+                "condition": "Light Rain",
+                "max_rain_probability_pct": 80.0,
+                "expected_rain_mm_24h": 12.0,
+                "temperature_c": 22.0,
+                "is_forced": True,
+            }
+        elif "heat" in s_lower:
+            _forced_weather = {
+                "condition": "Heatwave",
+                "max_rain_probability_pct": 0.0,
+                "expected_rain_mm_24h": 0.0,
+                "temperature_c": 39.0,
+                "is_forced": True,
+            }
+        elif "cloud" in s_lower:
+            _forced_weather = {
+                "condition": "Cloudy",
+                "max_rain_probability_pct": 30.0,
+                "expected_rain_mm_24h": 0.5,
+                "temperature_c": 24.0,
+                "is_forced": True,
+            }
+        elif "clear" in s_lower or "sun" in s_lower:
+            _forced_weather = {
+                "condition": "Clear / Sunny",
+                "max_rain_probability_pct": 5.0,
+                "expected_rain_mm_24h": 0.0,
+                "temperature_c": 28.0,
+                "is_forced": True,
+            }
+        else:
+            _forced_weather = None
 
 
 # ============================================================
@@ -247,12 +298,13 @@ def _safe_default(reason: str) -> dict:
     return {"trigger_pump": False, "duration_sec": 0, "reason": reason}
 
 
-def decide_irrigation(telemetry: dict, history: list | None = None) -> dict:
+def decide_irrigation(telemetry: dict, history: list | None = None, weather_override: dict | None = None) -> dict:
     """Main entry point. See module docstring for the contract.
     NEVER raises. Always returns the {trigger_pump, duration_sec, reason} shape.
+    Accepts optional weather_override for live demo simulations.
     """
     history = history or []
-    weather = get_weather_forecast()
+    weather = weather_override if weather_override is not None else get_weather_forecast()
     system_prompt, user_prompt = _build_prompts(telemetry, weather, history)
 
     try:
@@ -293,6 +345,21 @@ def decide_irrigation(telemetry: dict, history: list | None = None) -> dict:
     reason = args.get("reason", "")
 
     # ---- Deterministic Weather Safety Validator ----
+    profile = get_plant_profile()
+    moisture_range = profile.get("ideal_moisture_range_pct", [40, 60])
+    min_moisture = moisture_range[0] if len(moisture_range) > 0 else 40
+    current_moisture = float(telemetry.get("soil_moisture_pct", 0.0))
+
+    # Requirement: If rain probability >= 60% or significant rain is predicted, suspend watering (unless critically dry < 25%)
+    rain_prob = weather.get("max_rain_probability_pct")
+    rain_mm = weather.get("expected_rain_mm_24h")
+    if rain_prob is not None and (float(rain_prob) >= 60.0 or (rain_mm is not None and float(rain_mm) >= 3.0)):
+        if current_moisture >= 25.0:
+            print(f"[agent.py] Rain probability {rain_prob}% >= 60% — deterministically overriding to suspend watering.")
+            trigger = False
+            duration = 0
+            reason = f"Watering Suspended: Rain Predicted ({rain_prob}% chance, {rain_mm or 0}mm rainfall). Soil moisture at {current_moisture}% will be replenished naturally."
+
     # Requirement 3: If weather is unavailable AND the soil is only moderately dry, do NOT trigger irrigation.
     # Preserve genuinely critical/emergency irrigation.
     weather_unavailable = (
@@ -300,11 +367,6 @@ def decide_irrigation(telemetry: dict, history: list | None = None) -> dict:
         or weather.get("expected_rain_mm_24h") is None
         or bool(weather.get("error"))
     )
-
-    profile = get_plant_profile()
-    moisture_range = profile.get("ideal_moisture_range_pct", [40, 60])
-    min_moisture = moisture_range[0] if len(moisture_range) > 0 else 40
-    current_moisture = float(telemetry.get("soil_moisture_pct", 0.0))
 
     # Moderately dry: below ideal min, but within 15 percentage points of ideal min
     is_moderately_dry = (current_moisture < min_moisture) and ((min_moisture - current_moisture) <= 15)

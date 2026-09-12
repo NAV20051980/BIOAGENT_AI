@@ -332,10 +332,18 @@ class Telemetry(BaseModel):
     temperature_c: float
     humidity_pct: float
     device_id: str = "esp32-01"
+    demo_weather_override: dict | None = None
 
 
 class DemoScenario(BaseModel):
-    scenario: str  # "rain" | "clear" | "off"
+    scenario: str | None = None  # "rain" | "clear" | "storm" | "heatwave" | "cloudy" | "off" | "custom"
+    condition: str | None = None  # e.g. "Clear / Sunny", "Light Rain", "Heavy Thunderstorm", "Cloudy", "Heatwave"
+    rain_probability_pct: float | None = None
+    max_rain_probability_pct: float | None = None
+    expected_rain_mm_24h: float | None = None
+    expected_rainfall_mm: float | None = None
+    temperature_c: float | None = None
+    temperature_offset_c: float | None = None
 
 
 class SignupRequest(BaseModel):
@@ -917,9 +925,18 @@ def plant_profile():
 
 
 @app.post("/telemetry")
-def receive_telemetry(telemetry: Telemetry):
+def receive_telemetry(
+    telemetry: Telemetry,
+    demo_weather_override: str | None = None,
+):
     history = rows_to_history_shape(get_recent_decisions(limit=5))
-    decision = decide_irrigation(telemetry.model_dump(), history=history)
+    override = telemetry.demo_weather_override
+    if not override and demo_weather_override:
+        try:
+            override = json.loads(demo_weather_override)
+        except Exception:
+            pass
+    decision = decide_irrigation(telemetry.model_dump(), history=history, weather_override=override)
     save_decision(telemetry.model_dump(), decision, telemetry.device_id)
     return decision
 
@@ -954,10 +971,37 @@ def status():
 
 @app.post("/demo/weather-scenario")
 def set_demo_weather(payload: DemoScenario):
-    """Lets Member 3/4 force a weather scenario for a reliable live demo,
+    """Lets Member 3/4 force a weather scenario or custom parameters for live demo simulations,
     without needing real weather to cooperate on stage.
-    scenario: "rain" | "clear" | "off" (off = use real weather again)
+    scenario: "rain" | "clear" | "storm" | "heatwave" | "cloudy" | "off" | "custom"
     """
-    scenario = payload.scenario if payload.scenario in ("rain", "clear") else None
-    force_weather_scenario(scenario)
-    return {"forced_scenario": scenario or "off (using real weather)"}
+    raw_dict = payload.model_dump(exclude_none=True)
+    if not raw_dict or raw_dict.get("scenario") == "off":
+        force_weather_scenario(None)
+        return {
+            "forced_scenario": "off (using real weather)",
+            "active_weather": get_weather_forecast(),
+        }
+
+    has_custom_fields = any(
+        k in raw_dict
+        for k in (
+            "condition",
+            "rain_probability_pct",
+            "max_rain_probability_pct",
+            "expected_rain_mm_24h",
+            "expected_rainfall_mm",
+            "temperature_c",
+        )
+    )
+
+    if has_custom_fields:
+        force_weather_scenario(raw_dict)
+    else:
+        force_weather_scenario(raw_dict.get("scenario"))
+
+    active = get_weather_forecast()
+    return {
+        "forced_scenario": raw_dict.get("scenario") or "custom",
+        "active_weather": active,
+    }

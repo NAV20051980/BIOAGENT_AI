@@ -1,51 +1,69 @@
-import PlantIllustration from '../common/PlantIllustration.jsx'
+import DigitalTwin3D from '../DigitalTwin3D.jsx'
 import { computePlantCondition } from '../../utils/plantHealth.js'
 import './DigitalTwinPanel.css'
 
 const CAPTIONS = {
-  healthy: 'looking vibrant and upright — no action needed right now.',
-  normal: 'in good shape, tracking slightly toward the dry side.',
+  healthy: 'looking vibrant and upright — optimal turgor pressure maintained.',
+  normal: 'in good shape, tracking steady with healthy cellular turgidity.',
   'needs-attention': 'starting to droop as soil moisture drifts below its ideal range.',
-  stressed: 'visibly stressed — soil moisture has fallen well below its ideal range.',
-  critical: 'in critical condition and needs water soon.',
+  stressed: 'visibly stressed with loss of leaf turgor — soil moisture is low.',
+  critical: 'in critical condition — severe turgor loss, requires hydration soon.',
 }
 
-// LEVEL 9 PART 1: this is now the UPPER REGION of ONE central hero object
-// (see CentralPlantSystem), not its own card. It intentionally no longer
-// renders its own <Panel> — the surrounding background/border/shadow now
-// belong to the hero as a whole, so the twin and Growing Analysis read as
-// one object instead of two cards glued together. Same computed
-// condition/state as before; the floating temperature and humidity chips
-// are unchanged placement, reusing the same `telemetry` values shown in
-// Growing Analysis so nothing here can disagree with that panel.
 export default function DigitalTwinPanel({ plant, telemetry }) {
   const condition = computePlantCondition(plant, telemetry)
+  const moisture =
+    telemetry?.soil_moisture_pct ??
+    telemetry?.soil_moisture ??
+    telemetry?.soilMoisture ??
+    45
+  const humidity =
+    telemetry?.humidity_pct ??
+    telemetry?.humidity ??
+    50
+  const temperature =
+    telemetry?.temperature_c ??
+    telemetry?.temperature ??
+    24
 
   return (
     <div className="twin-panel">
-      <p className="twin-panel__eyebrow">2D Digital Twin</p>
+      <div className="twin-panel__header">
+        <p className="twin-panel__eyebrow">3D Digital Twin</p>
+        <span className="twin-panel__live-indicator">
+          <span className="twin-panel__pulse-dot" />
+          Interactive 3D
+        </span>
+      </div>
+
       <div className="twin-panel__stage">
+        {/* Floating Telemetry Metric Badges */}
         <span className="twin-panel__side-stat twin-panel__side-stat--temp">
-          {telemetry.temperature}&deg;
+          {temperature}&deg;C
         </span>
         <span className="twin-panel__side-stat twin-panel__side-stat--humidity">
-          {telemetry.humidity}%
+          {humidity}%
         </span>
-        <div className={`twin-panel__blob twin-panel__blob--${condition.state}`}>
-          <PlantIllustration
-            shape={plant.illustration.shape}
-            color={plant.illustration.color}
-            droop={condition.droop}
-            showPot
-            size={148}
+
+        {/* 3D Scene Component */}
+        <div className="twin-panel__3d-container">
+          <DigitalTwin3D
+            moisture={moisture}
+            humidity={humidity}
+            temperature={temperature}
+            plant={plant}
+            telemetry={telemetry}
           />
         </div>
+
+        {/* Plant Condition Badge */}
         <span className={`twin-panel__badge twin-panel__badge--${condition.state}`}>
           {condition.label}
         </span>
       </div>
+
       <p className="twin-panel__caption">
-        {plant.name} is {CAPTIONS[condition.state]}
+        <strong>{plant?.name || 'Plant'}</strong> is {CAPTIONS[condition.state] || 'monitored in real-time.'}
       </p>
     </div>
   )

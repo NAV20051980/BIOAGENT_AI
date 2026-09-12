@@ -122,6 +122,33 @@ export function BioAgentProvider({ children }) {
 
   const lastDecisionTimestampRef = useRef(null);
 
+  const [isDemoMode, setIsDemoMode] = useState(() => {
+    try {
+      const savedUser = localStorage.getItem('bioagent_user');
+      const parsed = savedUser ? JSON.parse(savedUser) : null;
+      if (parsed?.username === 'demo') return true;
+      return localStorage.getItem('bioagent_demo_mode') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const [demoWeather, setDemoWeather] = useState({
+    active: false,
+    condition: 'Clear / Sunny',
+    rainProbability: 5,
+    temperature: 28,
+    expectedRainfall: 0,
+  });
+
+  const toggleDemoMode = useCallback((forcedVal) => {
+    setIsDemoMode((prev) => {
+      const next = typeof forcedVal === 'boolean' ? forcedVal : !prev;
+      localStorage.setItem('bioagent_demo_mode', next ? 'true' : 'false');
+      return next;
+    });
+  }, []);
+
   const [weather, setWeather] = useState({
     available: false,
     rainProbability: null,
@@ -209,6 +236,18 @@ export function BioAgentProvider({ children }) {
 
   // Refresh weather
   const refreshWeather = useCallback(async () => {
+    if (demoWeather.active) {
+      setWeather({
+        available: true,
+        rainProbability: demoWeather.rainProbability,
+        expectedRainfall: demoWeather.expectedRainfall,
+        temperature: demoWeather.temperature,
+        condition: demoWeather.condition,
+        error: null,
+        isDemo: true,
+      });
+      return;
+    }
     setLoading((prev) => ({ ...prev, weather: true }));
     try {
       const data = await getWeather();
@@ -217,14 +256,16 @@ export function BioAgentProvider({ children }) {
           available: true,
           rainProbability: data.max_rain_probability_pct,
           expectedRainfall: data.expected_rain_mm_24h,
-          temperature: latestTelemetry.temperature || 24,
+          temperature: data.temperature_c || latestTelemetry.temperature || 24,
           condition:
-            data.max_rain_probability_pct > 60
+            data.condition ||
+            (data.max_rain_probability_pct > 60
               ? 'Light Rain'
               : data.max_rain_probability_pct > 20
               ? 'Partly Cloudy'
-              : 'Sunny',
+              : 'Clear / Sunny'),
           error: null,
+          isForced: Boolean(data.is_forced),
         });
         setErrors((prev) => ({ ...prev, weather: null }));
       } else {
@@ -250,7 +291,7 @@ export function BioAgentProvider({ children }) {
     } finally {
       setLoading((prev) => ({ ...prev, weather: false }));
     }
-  }, [latestTelemetry.temperature]);
+  }, [demoWeather, latestTelemetry.temperature]);
 
   // Handle manual pump activation via POST /pump/activate
   const handleActivatePump = useCallback(
@@ -419,17 +460,181 @@ export function BioAgentProvider({ children }) {
     [refreshPlantProfile, refreshUserPlants]
   );
 
+  // Update demo weather with live simulation and automatic re-evaluation of AI Irrigation Recommendation
+  const updateDemoWeather = useCallback(
+    async (updates) => {
+      const nextDemoWeather = {
+        ...demoWeather,
+        ...updates,
+        active: true,
+      };
+      setDemoWeather(nextDemoWeather);
+
+      // 1. Immediately update active weather state in context for instant UI feedback
+      const nextWeatherState = {
+        available: true,
+        rainProbability: Number(nextDemoWeather.rainProbability),
+        expectedRainfall: Number(nextDemoWeather.expectedRainfall),
+        temperature: Number(nextDemoWeather.temperature),
+        condition: nextDemoWeather.condition,
+        error: null,
+        isDemo: true,
+      };
+      setWeather(nextWeatherState);
+
+      // 2. Notify backend of demo weather scenario override
+      try {
+        await setDemoWeatherScenario({
+          scenario: 'custom',
+          condition: nextDemoWeather.condition,
+          rain_probability_pct: Number(nextDemoWeather.rainProbability),
+          max_rain_probability_pct: Number(nextDemoWeather.rainProbability),
+          expected_rain_mm_24h: Number(nextDemoWeather.expectedRainfall),
+          expected_rainfall_mm: Number(nextDemoWeather.expectedRainfall),
+          temperature_c: Number(nextDemoWeather.temperature),
+        });
+      } catch (e) {
+        console.warn('Backend weather scenario update failed:', e);
+      }
+
+      // 3. Automatic re-evaluation of AI Irrigation Recommendation
+      const currentMoisture = Number(
+        latestTelemetry?.soilMoisture ?? latestTelemetry?.soil_moisture_pct ?? 45
+      );
+      const plantMin = Number(activePlant?.idealMoistureMin ?? 40);
+      const plantMax = Number(activePlant?.idealMoistureMax ?? 60);
+
+      // Instant client decision update
+      if (nextWeatherState.rainProbability >= 60 || nextWeatherState.expectedRainfall >= 3.0) {
+        if (currentMoisture >= 25) {
+          setLatestDecision({
+            trigger_pump: false,
+            duration_sec: 0,
+            reason: `Watering Suspended: Rain Predicted (${nextWeatherState.rainProbability}% rain probability, ${nextWeatherState.expectedRainfall}mm expected). Soil moisture at ${currentMoisture}% will be replenished naturally.`,
+            decision: 'DO NOT WATER',
+            timestamp: Date.now(),
+          });
+        }
+      } else if (currentMoisture < plantMin) {
+        const deficit = plantMin - currentMoisture;
+        const duration = Math.min(30, Math.max(5, Math.round(deficit * 0.8)));
+        setLatestDecision({
+          trigger_pump: true,
+          duration_sec: duration,
+          reason: `Optimal irrigation triggered: Soil moisture (${currentMoisture}%) below ideal minimum (${plantMin}%). Forecast is ${nextWeatherState.condition} with low rain probability (${nextWeatherState.rainProbability}%).`,
+          decision: 'WATER',
+          timestamp: Date.now(),
+        });
+      } else {
+        setLatestDecision({
+          trigger_pump: false,
+          duration_sec: 0,
+          reason: `Soil moisture (${currentMoisture}%) is within target range (${plantMin}%–${plantMax}%). No irrigation required under ${nextWeatherState.condition}.`,
+          decision: 'DO NOT WATER',
+          timestamp: Date.now(),
+        });
+      }
+
+      // 4. Trigger backend Groq AI re-evaluation in background
+      try {
+        await handleSendTelemetry({
+          soil_moisture_pct: currentMoisture,
+          temperature_c: nextWeatherState.temperature,
+          humidity_pct: latestTelemetry.humidity || 50,
+          device_id: 'demo-weather-sim',
+          demo_weather_override: {
+            condition: nextWeatherState.condition,
+            max_rain_probability_pct: nextWeatherState.rainProbability,
+            expected_rain_mm_24h: nextWeatherState.expectedRainfall,
+            temperature_c: nextWeatherState.temperature,
+          },
+        });
+      } catch (e) {
+        // Handled silently
+      }
+    },
+    [demoWeather, latestTelemetry, activePlant, handleSendTelemetry]
+  );
+
+  // Apply quick weather presets
+  const applyWeatherPreset = useCallback(
+    async (preset) => {
+      switch (preset) {
+        case 'sunny':
+        case 'clear':
+          await updateDemoWeather({
+            condition: 'Clear / Sunny',
+            rainProbability: 5,
+            temperature: 30,
+            expectedRainfall: 0,
+          });
+          break;
+        case 'rain':
+          await updateDemoWeather({
+            condition: 'Light Rain',
+            rainProbability: 75,
+            temperature: 22,
+            expectedRainfall: 8.5,
+          });
+          break;
+        case 'storm':
+        case 'thunderstorm':
+          await updateDemoWeather({
+            condition: 'Heavy Thunderstorm',
+            rainProbability: 95,
+            temperature: 19,
+            expectedRainfall: 24.0,
+          });
+          break;
+        case 'cloudy':
+          await updateDemoWeather({
+            condition: 'Cloudy',
+            rainProbability: 35,
+            temperature: 24,
+            expectedRainfall: 0.8,
+          });
+          break;
+        case 'heatwave':
+          await updateDemoWeather({
+            condition: 'Heatwave',
+            rainProbability: 0,
+            temperature: 39,
+            expectedRainfall: 0,
+          });
+          break;
+        case 'reset':
+        case 'off':
+          setDemoWeather({
+            active: false,
+            condition: 'Clear / Sunny',
+            rainProbability: 5,
+            temperature: 24,
+            expectedRainfall: 0,
+          });
+          try {
+            await setDemoWeatherScenario('off');
+            await refreshWeather();
+          } catch (e) {
+            console.warn('Weather reset failed:', e);
+          }
+          break;
+        default:
+          break;
+      }
+    },
+    [updateDemoWeather, refreshWeather]
+  );
+
   // Handle weather demo scenario
   const handleDemoWeatherScenario = useCallback(
     async (scenario) => {
-      try {
-        await setDemoWeatherScenario(scenario);
-        await refreshWeather();
-      } catch (err) {
-        setErrors((prev) => ({ ...prev, weather: err.message }));
+      if (typeof scenario === 'string') {
+        await applyWeatherPreset(scenario);
+      } else {
+        await updateDemoWeather(scenario);
       }
     },
-    [refreshWeather]
+    [applyWeatherPreset, updateDemoWeather]
   );
 
   // Transient Pump Timer: Auto-Revert after duration_sec
@@ -595,6 +800,12 @@ export function BioAgentProvider({ children }) {
   }, [refreshStatus, refreshPlantProfile, refreshWeather, refreshUserPlants]);
 
   const value = {
+    isDemoMode,
+    setIsDemoMode,
+    toggleDemoMode,
+    demoWeather,
+    updateDemoWeather,
+    applyWeatherPreset,
     backendStatus,
     activeProfile,
     activePlant,

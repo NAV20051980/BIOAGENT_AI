@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useBioAgent } from '../context/BioAgentContext.jsx';
 import MetricCards from '../components/dashboard/MetricCards.jsx';
+import DemoWeatherControls from '../components/DemoWeatherControls.jsx';
 import CentralPlantSystem from '../components/central-hero/CentralPlantSystem.jsx';
 import InventoryPanel from '../components/inventory/InventoryPanel.jsx';
 import GrowingAnalysisPanel from '../components/analysis/GrowingAnalysisPanel.jsx';
@@ -73,6 +74,9 @@ export default function Dashboard() {
           idealMax={idealMax}
           pumpActive={decision?.trigger_pump || decision?.decision === 'WATER'}
         />
+
+        {/* Demo Weather Simulation Controls */}
+        <DemoWeatherControls />
 
         {/* 2. MIDDLE: 3-Column Macro Grid */}
         <div className="dashboard-grid">

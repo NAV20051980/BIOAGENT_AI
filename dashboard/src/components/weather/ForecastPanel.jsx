@@ -1,12 +1,19 @@
-import { CloudSun, CloudRain, Sun, Cloud } from 'lucide-react'
+import { CloudSun, CloudRain, Sun, Cloud, CloudLightning, Flame } from 'lucide-react'
 import Panel from '../common/Panel.jsx'
 import './ForecastPanel.css'
 
 const CONDITION_ICONS = {
   'Partly Cloudy': CloudSun,
-  Sunny: Sun,
-  Cloudy: Cloud,
+  'Sunny': Sun,
+  'Sunny / Clear': Sun,
+  'Clear / Sunny': Sun,
+  'Cloudy': Cloud,
   'Light Rain': CloudRain,
+  'Heavy Rain': CloudRain,
+  'Thunderstorm': CloudLightning,
+  'Heavy Thunderstorm': CloudLightning,
+  'Extreme Heat': Flame,
+  'Heatwave': Flame,
 }
 
 export default function ForecastPanel({ forecast }) {

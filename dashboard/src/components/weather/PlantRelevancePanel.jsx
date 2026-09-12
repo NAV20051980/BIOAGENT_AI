@@ -18,15 +18,23 @@ export default function PlantRelevancePanel({ weather }) {
   })
 
   const waterCount = rows.filter((row) => row.decision.decision === 'WATER').length
+  const isHighRain = (weather?.rainProbability ?? 0) >= 60 || (weather?.expectedRainfall ?? 0) >= 3.0
+
+  let summaryText = ''
+  if (isHighRain) {
+    summaryText = 'Watering Suspended: High chance of rain. Natural precipitation will hydrate your plants.'
+  } else if (waterCount === 0) {
+    summaryText = 'No plants need watering today given current conditions.'
+  } else {
+    summaryText = `${waterCount} of ${rows.length} plants may need watering today.`
+  }
 
   return (
     <Panel className="plant-relevance-panel">
       <div className="plant-relevance-panel__head">
         <p className="plant-relevance-panel__eyebrow">Plant Relevance</p>
-        <p className="plant-relevance-panel__summary">
-          {waterCount === 0
-            ? 'No plants need watering today given current conditions.'
-            : `${waterCount} of ${rows.length} plants may need watering today.`}
+        <p className={`plant-relevance-panel__summary ${isHighRain ? 'plant-relevance-panel__summary--rain-suspend' : ''}`}>
+          {summaryText}
         </p>
       </div>
 
