@@ -127,7 +127,7 @@ const int SOIL_DRY = 2480;
 const int SOIL_WET = 790;
 
 // 3000 is a conservative estimated air/removal threshold and should be recalibrated with measured sensor values after the demo.
-#define SOIL_MAX_AIR_RAW 3000
+#define SOIL_MAX_AIR_RAW 2400
 
 
 // ============================================================
