@@ -1,306 +1,236 @@
 """
 BioAgent AI — plant_id.py
-Local, open-source plant species identification from a photo — no external API.
+Multimodal Computer Vision plant species identification powered by Groq Vision.
 
-Two-stage pipeline (this is the important part for "only focus on the plant"):
+Model: qwen/qwen3.8-27b (multimodal vision-language model)
+Role: Botanical identification and plant profile generation ONLY.
+      This module NEVER controls the physical water pump or relay.
 
-  Stage 1 — DETECT: a pretrained object detector (torchvision Faster R-CNN,
-            COCO weights) finds the "potted plant" bounding box in the frame
-            and we crop tightly to it, with a small margin. This throws away
-            background clutter, hands, tables, other objects — the classifier
-            in Stage 2 only ever sees the plant itself, not the whole scene.
-
-  Stage 2 — CLASSIFY: a pretrained MobileNetV3 image classifier runs on the
-            cropped plant region only, and its top-5 predictions are matched
-            against a small care-profile table.
-
-If Stage 1 finds nothing confident enough, we fall back to classifying the
-full frame (with a note in the result saying detection didn't fire), rather
-than failing outright.
-
-Both models download their weights once from PyTorch's public hub (needs
-internet the first time only) and are cached locally afterwards — fully
-offline after that.
-
-Usage from main.py:
-    from plant_id import identify_plant_from_bytes
-    result = identify_plant_from_bytes(image_bytes)
-    # result = {"species": ..., "confidence": 0.83, "profile": {...},
-    #           "detection": {"plant_found": true, "box": [...], "detector_confidence": 0.91}}
+Flow:
+    Image bytes -> Pillow validation & JPEG conversion -> Base64 data URL
+    -> Groq Vision (qwen/qwen3.8-27b) with strict botanical prompt & JSON schema
+    -> Botanical validation & confidence check (threshold >= 0.50)
+    -> Structured species, confidence, visual evidence & watering profile dict.
 """
 
 import io
+import os
 import json
+import base64
+from PIL import Image
+from dotenv import load_dotenv
+from openai import OpenAI
 
-_detector = None
-_detector_categories = None
+# Load backend/.env into the environment. Safe to call even if agent.py
+# already called it — dotenv won't override real env vars either way.
+load_dotenv()
 
-_classifier = None
-_classifier_weights = None
-_classifier_categories = None
+# Multimodal vision model on Groq
+VISION_MODEL = os.environ.get("VISION_MODEL", "qwen/qwen3.8-27b")
 
-# Minimum detector confidence to trust a "potted plant" box.
-# Lower this if the demo plant keeps getting missed; raise it if it's
-# grabbing background objects too eagerly.
-DETECTION_CONFIDENCE_THRESHOLD = 0.40
-
-# Extra margin (fraction of box size) added around the detected plant box,
-# so leaf tips/edges right at the box border aren't clipped out.
-CROP_MARGIN_FRACTION = 0.15
-
-
-# ------------------------------------------------------------------
-# Care profiles for common houseplants/crops. Extend this table as needed —
-# it's the "knowledge" layer on top of the raw classifier output.
-# ------------------------------------------------------------------
-CARE_PROFILES = {
-    "monstera": {
-        "species": "Monstera Deliciosa",
-        "growth_stage": "active vegetative growth",
-        "ideal_moisture_range_pct": [40, 65],
-        "notes": "Prefers evenly moist soil; sensitive to both drought stress and root rot from overwatering.",
-    },
-    "cactus": {
-        "species": "Cactus (generic)",
-        "growth_stage": "mature",
-        "ideal_moisture_range_pct": [10, 25],
-        "notes": "Drought-tolerant; overwatering is far more dangerous than underwatering.",
-    },
-    "fern": {
-        "species": "Fern (generic)",
-        "growth_stage": "mature",
-        "ideal_moisture_range_pct": [50, 75],
-        "notes": "Tropical fern; needs consistently moist soil, dries out and browns quickly if neglected.",
-    },
-    "succulent": {
-        "species": "Succulent (generic)",
-        "growth_stage": "mature",
-        "ideal_moisture_range_pct": [15, 30],
-        "notes": "Stores water in leaves; water sparingly and let soil dry between waterings.",
-    },
-    "daisy": {
-        "species": "Daisy / flowering annual",
-        "growth_stage": "flowering",
-        "ideal_moisture_range_pct": [40, 60],
-        "notes": "Flowering plant; consistent moisture supports blooming, avoid waterlogging.",
-    },
-    "corn": {
-        "species": "Corn / maize",
-        "growth_stage": "vegetative",
-        "ideal_moisture_range_pct": [45, 65],
-        "notes": "Crop plant; moderate consistent watering, sensitive during flowering/tasseling stage.",
-    },
-}
-
-# Maps raw ImageNet class-name fragments -> a CARE_PROFILES key.
-_LABEL_KEYWORDS = {
-    "monstera": "monstera",
-    "cactus": "cactus",
-    "fern": "fern",
-    "succulent": "succulent",
-    "daisy": "daisy",
-    "corn": "corn",
-    "cardoon": "fern",  # ImageNet quirk — leafy plant, closest analog
-    "pot": None,  # "pot" (flowerpot) label — no plant info, ignore
-}
-
+# Safe generic fallback profile
 GENERIC_PROFILE = {
     "species": "Unidentified plant (generic defaults applied)",
     "growth_stage": "unknown",
     "ideal_moisture_range_pct": [35, 60],
-    "notes": "Local classifier did not confidently match a known species — using safe generic watering range.",
+    "notes": "Vision model could not reliably identify the plant with sufficient confidence. Using safe generic watering range.",
 }
 
+CONFIDENCE_THRESHOLD = 0.50
 
-# ============================================================
-# STAGE 1 — DETECTION: find the plant, crop everything else out
-# ============================================================
-def _load_detector():
-    """Lazy-load a pretrained COCO object detector. We only care about its
-    'potted plant' class — this lets us crop straight to the plant and
-    ignore background, hands, furniture, etc. in the frame.
+
+def _get_client() -> OpenAI:
+    """Instantiate OpenAI client configured for Groq API."""
+    api_key = os.environ.get("GROQ_API_KEY", "")
+    return OpenAI(api_key=api_key, base_url="https://api.groq.com/openai/v1")
+
+
+def _image_bytes_to_base64_jpeg(image_bytes: bytes, max_dim: int = 1024) -> str:
+    """Validate image bytes using Pillow, resize if large for network efficiency,
+    and return a base64 JPEG data URL.
     """
-    global _detector, _detector_categories
-    if _detector is not None:
-        return
-
-    from torchvision.models.detection import (
-        fasterrcnn_mobilenet_v3_large_320_fpn,
-        FasterRCNN_MobileNet_V3_Large_320_FPN_Weights,
-    )
-
-    weights = FasterRCNN_MobileNet_V3_Large_320_FPN_Weights.DEFAULT
-    _detector = fasterrcnn_mobilenet_v3_large_320_fpn(weights=weights)
-    _detector.eval()
-    _detector_categories = weights.meta["categories"]
-
-
-def _detect_plant_box(img):
-    """Run the detector, return the highest-confidence 'potted plant' box
-    (in pixel coords: x1, y1, x2, y2) plus its confidence, or (None, 0.0)
-    if nothing confident enough was found.
-    """
-    import torch
-    import torchvision.transforms.functional as F
-
-    _load_detector()
-    tensor = F.to_tensor(img)
-
-    with torch.no_grad():
-        predictions = _detector([tensor])[0]
-
-    boxes = predictions["boxes"]
-    labels = predictions["labels"]
-    scores = predictions["scores"]
-
-    best_box, best_score = None, 0.0
-    for box, label_idx, score in zip(boxes, labels, scores):
-        label = _detector_categories[label_idx]
-        if label == "potted plant" and score.item() > best_score:
-            best_box = box.tolist()
-            best_score = score.item()
-
-    if best_box is not None and best_score >= DETECTION_CONFIDENCE_THRESHOLD:
-        return best_box, best_score
-    return None, 0.0
-
-
-def _crop_with_margin(img, box):
-    """Crop img to box, expanded by CROP_MARGIN_FRACTION on each side,
-    clamped to image bounds.
-    """
+    img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    
+    # Scale down if larger than max_dim to keep payload small and fast
     w, h = img.size
-    x1, y1, x2, y2 = box
-    box_w, box_h = x2 - x1, y2 - y1
-    mx, my = box_w * CROP_MARGIN_FRACTION, box_h * CROP_MARGIN_FRACTION
-
-    x1 = max(0, x1 - mx)
-    y1 = max(0, y1 - my)
-    x2 = min(w, x2 + mx)
-    y2 = min(h, y2 + my)
-
-    return img.crop((x1, y1, x2, y2))
+    if max(w, h) > max_dim:
+        scale = max_dim / float(max(w, h))
+        img = img.resize((int(w * scale), int(h * scale)), Image.Resampling.LANCZOS)
+        
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=85)
+    b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+    return f"data:image/jpeg;base64,{b64}"
 
 
-# ============================================================
-# STAGE 2 — CLASSIFICATION: species guess on the cropped plant only
-# ============================================================
-def _load_classifier():
-    global _classifier, _classifier_weights, _classifier_categories
-    if _classifier is not None:
-        return
+def _build_identification_prompt() -> str:
+    return """You are an expert botanical vision AI for smart agriculture.
+Carefully examine this image to identify the plant species.
 
-    from torchvision.models import mobilenet_v3_small, MobileNet_V3_Small_Weights
+IMPORTANT — FOCUS ONLY ON THE PLANT:
+- The image may contain a pot, hands, table, background clutter, other objects, or other plants in soft focus behind the main subject.
+- Identify and describe ONLY the single most prominent, in-focus plant in the frame — ignore pots, containers, background greenery, and anything that is not plant tissue.
+- Do not let the pot's material/color or the background influence the species identification or the "notes" field.
 
-    _classifier_weights = MobileNet_V3_Small_Weights.DEFAULT
-    _classifier = mobilenet_v3_small(weights=_classifier_weights)
-    _classifier.eval()
-    _classifier_categories = _classifier_weights.meta["categories"]
+Examine diagnostic botanical morphological features of that one plant:
+1. Leaf morphology: Number and arrangement of leaflets (simple vs compound: trifoliate, pinnate, bipinnate, palmate).
+2. Leaf shape, apex, base, margins (entire, crenate, serrate), and venation pattern.
+3. Stem characteristics, thorns/spines, bark, and petioles.
+4. Flowers, buds, or fruits if visible.
+5. Overall plant habit and growth structure.
+
+Specific instructions for Bael (Aegle marmelos / Bilva / Wood Apple):
+- Aegle marmelos is characterized by alternate, trifoliate compound leaves (three leaflets on a common stalk), where lateral leaflets are ovate/elliptic and smaller than the terminal leaflet, with crenulate or entire margins and aromatic citrus glands.
+- CAUTION: Do NOT identify every trifoliate plant as Bael. Differentiate carefully from other trifoliate plants (such as Poncirus/trifoliate orange, poison ivy, clover, Erythrina, or laburnum).
+
+CONSERVATIVE IDENTIFICATION & UNCERTAINTY RULES:
+- If the image is NOT a plant (e.g. human, object, car, interior, abstract graphic), set "is_plant": false.
+- If the image is blurry, partial, poorly lit, or ambiguous such that you cannot reliably determine the species, set "is_plant": false or set "confidence" < 0.50.
+- DO NOT invent or guess a species when uncertain.
+- "confidence" must be a realistic calibrated float between 0.0 and 1.0 based strictly on visual clarity of diagnostic features.
+
+Respond with ONLY a valid JSON object strictly matching this schema:
+{
+  "is_plant": <true or false>,
+  "species": "<Common Name> (<Scientific Name>)",
+  "scientific_name": "<Genus species>",
+  "confidence": <float 0.0 to 1.0>,
+  "visual_evidence": "<detailed botanical morphological evidence observed in the image, describing only the plant itself>",
+  "profile": {
+    "species": "<Common Name> (<Scientific Name>)",
+    "growth_stage": "<seedling / vegetative / mature / flowering>",
+    "ideal_moisture_range_pct": [<min_int>, <max_int>],
+    "notes": "<specific soil type, moisture preferences, drought tolerance, and overwatering sensitivity>"
+  }
+}"""
 
 
-def _match_profile(label: str):
-    label_lower = label.lower()
-    for keyword, profile_key in _LABEL_KEYWORDS.items():
-        if keyword in label_lower:
-            if profile_key is None:
-                continue
-            return CARE_PROFILES[profile_key]
-    return None
+def _validate_profile(profile: dict | None) -> dict:
+    """Ensure the profile dict matches the required shape for agent.py."""
+    if not isinstance(profile, dict):
+        return dict(GENERIC_PROFILE)
+    
+    range_pct = profile.get("ideal_moisture_range_pct")
+    if (
+        not isinstance(range_pct, (list, tuple))
+        or len(range_pct) != 2
+        or not isinstance(range_pct[0], (int, float))
+        or not isinstance(range_pct[1], (int, float))
+        or range_pct[0] >= range_pct[1]
+    ):
+        range_pct = [35, 60]
+    else:
+        # Clamp to reasonable agronomic bounds
+        range_pct = [max(5, int(range_pct[0])), min(95, int(range_pct[1]))]
 
-
-def _classify(img) -> dict:
-    """Run the classifier on a (possibly cropped) PIL image, return the
-    best matched profile from the top-5 predictions, or a generic one.
-    """
-    import torch
-
-    _load_classifier()
-    preprocess = _classifier_weights.transforms()
-    batch = preprocess(img).unsqueeze(0)
-
-    with torch.no_grad():
-        logits = _classifier(batch)
-        probs = torch.nn.functional.softmax(logits[0], dim=0)
-
-    top5_prob, top5_idx = torch.topk(probs, 5)
-
-    for prob, idx in zip(top5_prob.tolist(), top5_idx.tolist()):
-        label = _classifier_categories[idx]
-        profile = _match_profile(label)
-        if profile:
-            return {
-                "species": profile["species"],
-                "confidence": round(prob, 3),
-                "raw_label": label,
-                "profile": profile,
-            }
-
-    top1_label = _classifier_categories[top5_idx[0].item()]
     return {
-        "species": GENERIC_PROFILE["species"],
-        "confidence": round(top5_prob[0].item(), 3),
-        "raw_label": top1_label,
-        "profile": GENERIC_PROFILE,
+        "species": str(profile.get("species", GENERIC_PROFILE["species"])),
+        "growth_stage": str(profile.get("growth_stage", "vegetative")),
+        "ideal_moisture_range_pct": range_pct,
+        "notes": str(profile.get("notes", GENERIC_PROFILE["notes"])),
     }
 
 
-# ============================================================
-# PUBLIC ENTRY POINT
-# ============================================================
 def identify_plant_from_bytes(image_bytes: bytes) -> dict:
-    """Detect the plant in the frame, crop to it, classify the crop.
-    Never raises — returns a generic-profile result on any failure so the
-    calling endpoint always gets a usable response.
+    """Run multimodal plant identification on raw image bytes using Groq Vision.
+    Never raises — returns a safe generic profile if classification fails or is uncertain.
     """
     try:
-        from PIL import Image
-
-        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
-
-        box, det_confidence = _detect_plant_box(img)
-        if box is not None:
-            crop = _crop_with_margin(img, box)
-            detection_info = {
-                "plant_found": True,
-                "box": [round(v, 1) for v in box],
-                "detector_confidence": round(det_confidence, 3),
-                "note": "Classified only the cropped plant region — background ignored.",
-            }
-            target_img = crop
-        else:
-            detection_info = {
-                "plant_found": False,
-                "box": None,
-                "detector_confidence": 0.0,
-                "note": "No confident 'potted plant' region found — classified the full frame instead.",
-            }
-            target_img = img
-
-        result = _classify(target_img)
-        result["detection"] = detection_info
-        return result
-
+        data_url = _image_bytes_to_base64_jpeg(image_bytes)
     except Exception as e:
-        print(f"[plant_id.py] Identification failed, using generic profile: {e}")
+        print(f"[plant_id.py] Image decoding/conversion error: {e}")
         return {
             "species": GENERIC_PROFILE["species"],
+            "scientific_name": None,
             "confidence": 0.0,
-            "raw_label": None,
-            "profile": GENERIC_PROFILE,
-            "detection": {"plant_found": False, "box": None, "detector_confidence": 0.0,
-                          "note": "Detection/classification pipeline errored."},
+            "visual_evidence": f"Failed to decode image: {e}",
+            "profile": dict(GENERIC_PROFILE),
+            "fallback_triggered": True,
+            "error": "invalid_image_format",
+        }
+
+    try:
+        client = _get_client()
+        prompt = _build_identification_prompt()
+        
+        response = client.chat.completions.create(
+            model=VISION_MODEL,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": data_url}},
+                    ],
+                }
+            ],
+            response_format={"type": "json_object"},
+            temperature=0.1,
+            max_tokens=450,
+        )
+
+        raw_content = response.choices[0].message.content or "{}"
+        data = json.loads(raw_content)
+
+        is_plant = bool(data.get("is_plant", False))
+        confidence = float(data.get("confidence", 0.0))
+        scientific_name = data.get("scientific_name", "")
+        species = data.get("species", "")
+        visual_evidence = data.get("visual_evidence", "")
+
+        # Fallback condition: not a plant, low confidence, or missing species info
+        if (
+            not is_plant
+            or confidence < CONFIDENCE_THRESHOLD
+            or not scientific_name
+            or "unidentified" in species.lower()
+        ):
+            reason_fallback = (
+                "Not identified as a plant"
+                if not is_plant
+                else f"Low confidence ({round(confidence, 2)} < {CONFIDENCE_THRESHOLD}) or ambiguous features"
+            )
+            return {
+                "species": GENERIC_PROFILE["species"],
+                "scientific_name": None,
+                "confidence": round(confidence, 3),
+                "visual_evidence": f"{visual_evidence} [Fallback applied: {reason_fallback}]".strip(),
+                "profile": dict(GENERIC_PROFILE),
+                "fallback_triggered": True,
+            }
+
+        # Validated high-confidence plant identification
+        validated_profile = _validate_profile(data.get("profile"))
+        return {
+            "species": species,
+            "scientific_name": scientific_name,
+            "confidence": round(confidence, 3),
+            "visual_evidence": visual_evidence,
+            "profile": validated_profile,
+            "fallback_triggered": False,
+        }
+
+    except Exception as e:
+        print(f"[plant_id.py] Vision identification failed: {e}")
+        return {
+            "species": GENERIC_PROFILE["species"],
+            "scientific_name": None,
+            "confidence": 0.0,
+            "visual_evidence": f"Vision API error: {e}",
+            "profile": dict(GENERIC_PROFILE),
+            "fallback_triggered": True,
             "error": str(e),
         }
 
 
 if __name__ == "__main__":
     import sys
-
     if len(sys.argv) < 2:
         print("Usage: python plant_id.py <path_to_image>")
         sys.exit(1)
 
     with open(sys.argv[1], "rb") as f:
-        data = f.read()
-    result = identify_plant_from_bytes(data)
-    print(json.dumps(result, indent=2))
+        content = f.read()
+
+    res = identify_plant_from_bytes(content)
+    print(json.dumps(res, indent=2))

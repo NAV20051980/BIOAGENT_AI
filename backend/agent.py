@@ -2,16 +2,20 @@
 BioAgent AI — agent.py
 OWNER: Member 2A (AI Agent & Weather Intelligence)
 
-OPEN-SOURCE VERSION
---------------------
-- LLM reasoning:  local Ollama (Llama 3.2 3B / Phi-3-mini) — no external LLM API.
-- Weather:        Open-Meteo — free, keyless, no rate-limit risk on demo day.
-- Plant profile:  dynamic, set by plant_id.py after a local CV species lookup
-                   (falls back to a generic default if nothing has been identified yet).
+This file is YOUR file. Member 2B's api.py imports `decide_irrigation()`
+from here and doesn't need to know anything about how it works internally.
 
-Contract with main.py (Member 2B) — UNCHANGED, so main.py doesn't need to change:
+Your contract with Member 2B (agree on this in the first 30 min, then don't
+change it without telling them):
 
     decide_irrigation(telemetry: dict, history: list[dict]) -> dict
+
+    telemetry looks like:
+        {"soil_moisture_pct": 22.0, "temperature_c": 31.0, "humidity_pct": 40.0}
+
+    history is a list of past decisions (2B gives you this from the DB),
+    most recent last, each shaped like:
+        {"timestamp": 1234567890.0, "soil_moisture_pct": 25, "decision": {...}}
 
     Return value is ALWAYS this shape, never anything else:
         {"trigger_pump": bool, "duration_sec": int, "reason": str}
@@ -24,40 +28,51 @@ import os
 import time
 import json
 import requests
+from dotenv import load_dotenv
+from openai import OpenAI
+
+# Load variables from backend/.env into the environment BEFORE reading them
+# below. Without this, os.environ.get(...) would only ever see real shell
+# env vars, never anything written in the .env file.
+load_dotenv()
 
 # ---------------- CONFIG ----------------
-OLLAMA_HOST = os.environ.get("OLLAMA_HOST", "http://localhost:11434")
-OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "llama3.2:latest")  # matches `ollama list` tag
-
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+OPENWEATHER_API_KEY = os.environ.get("OPENWEATHER_API_KEY", "")
 LAT = float(os.environ.get("BIOAGENT_LAT", "12.9716"))   # default: Bengaluru
 LON = float(os.environ.get("BIOAGENT_LON", "77.5946"))
 
 MAX_PUMP_RUNTIME_SEC = 30  # must match the firmware's hard cap — don't drift from this
 
-# Generic fallback profile, used until plant_id.py identifies something real.
 DEFAULT_PLANT_PROFILE = {
-    "species": "Unknown (generic houseplant defaults)",
-    "growth_stage": "unknown",
-    "ideal_moisture_range_pct": [35, 60],
-    "notes": "No plant has been identified yet via /identify-plant — using safe generic defaults.",
+    "species": "Monstera Deliciosa",
+    "growth_stage": "active vegetative growth",
+    "ideal_moisture_range_pct": [40, 65],
+    "notes": "Prefers evenly moist soil; sensitive to both drought stress and root rot from overwatering.",
 }
-
 _plant_profile = dict(DEFAULT_PLANT_PROFILE)
+PLANT_PROFILE = _plant_profile  # backward compatibility alias
 
 
-def set_plant_profile(profile: dict):
-    """Called by main.py after plant_id.py identifies a species from a photo.
-    Expected keys: species, growth_stage, ideal_moisture_range_pct, notes.
+def set_plant_profile(profile: dict | None):
+    """Update the active plant profile used by the Groq reasoning agent.
+    Merges with DEFAULT_PLANT_PROFILE so all expected fields remain present.
     """
     global _plant_profile
     merged = dict(DEFAULT_PLANT_PROFILE)
-    merged.update(profile or {})
+    if profile:
+        merged.update(profile)
     _plant_profile = merged
 
 
 def get_plant_profile() -> dict:
+    """Return the active plant profile."""
     return _plant_profile
 
+client = OpenAI(
+    api_key=GROQ_API_KEY,
+    base_url="https://api.groq.com/openai/v1"
+)
 
 WEATHER_CACHE_TTL_SEC = 60 * 60  # 1 hour
 _weather_cache = {"data": None, "fetched_at": 0}
@@ -68,7 +83,7 @@ _forced_weather = None
 
 
 # ============================================================
-# WEATHER TOOL — Open-Meteo (free, no API key)
+# WEATHER TOOL
 # ============================================================
 def get_weather_forecast() -> dict:
     """Fetch 24h precipitation forecast, cached for WEATHER_CACHE_TTL_SEC.
@@ -82,28 +97,22 @@ def get_weather_forecast() -> dict:
         return _weather_cache["data"]
 
     try:
-        url = "https://api.open-meteo.com/v1/forecast"
-        params = {
-            "latitude": LAT,
-            "longitude": LON,
-            "hourly": "precipitation_probability,precipitation",
-            "forecast_days": 1,
-            "timezone": "auto",
-        }
+        url = "https://api.openweathermap.org/data/2.5/forecast"
+        params = {"lat": LAT, "lon": LON, "appid": OPENWEATHER_API_KEY, "units": "metric", "cnt": 8}
         resp = requests.get(url, params=params, timeout=6)
         resp.raise_for_status()
         raw = resp.json()
 
-        hourly = raw.get("hourly", {})
-        probs = hourly.get("precipitation_probability", []) or []
-        rains = hourly.get("precipitation", []) or []
-
-        max_rain_prob = max(probs) if probs else 0.0
-        total_rain_mm = sum(rains) if rains else 0.0
+        max_rain_prob = 0.0
+        total_rain_mm = 0.0
+        for entry in raw.get("list", []):
+            pop = entry.get("pop", 0.0)
+            max_rain_prob = max(max_rain_prob, pop)
+            total_rain_mm += entry.get("rain", {}).get("3h", 0.0)
 
         result = {
-            "max_rain_probability_pct": round(float(max_rain_prob), 1),
-            "expected_rain_mm_24h": round(float(total_rain_mm), 2),
+            "max_rain_probability_pct": round(max_rain_prob * 100, 1),
+            "expected_rain_mm_24h": round(total_rain_mm, 2),
         }
         _weather_cache["data"] = result
         _weather_cache["fetched_at"] = now
@@ -114,7 +123,10 @@ def get_weather_forecast() -> dict:
 
 
 def force_weather_scenario(scenario: str | None):
-    """Demo helper. Call with 'rain', 'clear', or None (to un-force and use real weather)."""
+    """Demo helper. Call with 'rain', 'clear', or None (to un-force and use real weather).
+    2B can expose this via a demo-scenario endpoint so the live demo is reliable
+    regardless of what the actual sky is doing on the day.
+    """
     global _forced_weather
     if scenario == "rain":
         _forced_weather = {"max_rain_probability_pct": 90.0, "expected_rain_mm_24h": 12.0}
@@ -125,8 +137,31 @@ def force_weather_scenario(scenario: str | None):
 
 
 # ============================================================
-# AGENT REASONING — local Ollama, JSON-constrained output
+# AGENT REASONING
 # ============================================================
+IRRIGATION_TOOL_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "irrigation_decision",
+        "description": "Decide whether to trigger the water pump and for how long, based on plant biology, soil telemetry, and weather forecast.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "trigger_pump": {"type": "boolean", "description": "Whether to water the plant now."},
+                "duration_sec": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": MAX_PUMP_RUNTIME_SEC,
+                    "description": "How long to run the pump, in seconds. 0 if not watering.",
+                },
+                "reason": {"type": "string", "description": "One-sentence explanation of the decision, for logging/demo purposes."},
+            },
+            "required": ["trigger_pump", "duration_sec", "reason"],
+        },
+    },
+}
+
+
 def _build_prompts(telemetry: dict, weather: dict, history: list) -> tuple[str, str]:
     profile = get_plant_profile()
     moisture_range = profile.get("ideal_moisture_range_pct", [40, 60])
@@ -134,8 +169,8 @@ def _build_prompts(telemetry: dict, weather: dict, history: list) -> tuple[str, 
     max_moisture = moisture_range[1] if len(moisture_range) > 1 else 60
 
     # Format history human-readably for the LLM
-    now = time.time()
     formatted_history = []
+    now = time.time()
     for h in (history or [])[-5:]:
         ts = h.get("timestamp")
         min_ago = round((now - ts) / 60.0, 1) if isinstance(ts, (int, float)) else None
@@ -176,9 +211,8 @@ Follow this strict 5-step Decision Hierarchy:
    - Explicitly cite the rain probability ({weather.get('max_rain_probability_pct')}%) and expected rainfall ({weather.get('expected_rain_mm_24h')} mm).
    - Clearly explain whether water is applied, withheld for rain, or overridden for emergency critical dryness.
 
-5. Output Format Requirement:
-   - Respond with ONLY a single JSON object, no other text, no markdown fences, in exactly this shape:
-     {{"trigger_pump": <true or false>, "duration_sec": <integer 0-{MAX_PUMP_RUNTIME_SEC}>, "reason": "<one sentence>"}}
+5. Function Call Requirement:
+   - Always call the irrigation_decision function. Never respond with plain text.
 """
 
     user_prompt = f"""Current sensor readings:
@@ -190,7 +224,7 @@ Weather forecast (next 24h):
 - Max rain probability: {weather.get('max_rain_probability_pct')}%
 - Expected rainfall: {weather.get('expected_rain_mm_24h')} mm
 
-Decide whether to irrigate now. Respond with ONLY the JSON object described above."""
+Decide whether to irrigate now."""
 
     return system_prompt, user_prompt
 
@@ -200,50 +234,27 @@ def _safe_default(reason: str) -> dict:
     return {"trigger_pump": False, "duration_sec": 0, "reason": reason}
 
 
-def _extract_json(text: str) -> dict:
-    """Ollama models sometimes wrap JSON in prose or markdown fences even when
-    asked not to — pull out the first {...} block rather than trusting raw text.
-    """
-    text = text.strip()
-    start = text.find("{")
-    end = text.rfind("}")
-    if start == -1 or end == -1 or end < start:
-        raise ValueError("no JSON object found in model output")
-    return json.loads(text[start : end + 1])
-
-
-def _call_ollama(system_prompt: str, user_prompt: str) -> dict:
-    url = f"{OLLAMA_HOST}/api/chat"
-    payload = {
-        "model": OLLAMA_MODEL,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        "format": "json",  # asks Ollama to constrain output to valid JSON
-        "stream": False,
-        "options": {"temperature": 0.2},
-    }
-    resp = requests.post(url, json=payload, timeout=30)
-    resp.raise_for_status()
-    raw = resp.json()
-    content = raw.get("message", {}).get("content", "")
-    return _extract_json(content)
-
-
 def decide_irrigation(telemetry: dict, history: list | None = None) -> dict:
-    """Main entry point. NEVER raises. Always returns the
-    {trigger_pump, duration_sec, reason} shape.
+    """Main entry point. See module docstring for the contract.
+    NEVER raises. Always returns the {trigger_pump, duration_sec, reason} shape.
     """
     history = history or []
     weather = get_weather_forecast()
     system_prompt, user_prompt = _build_prompts(telemetry, weather, history)
 
     try:
-        args = _call_ollama(system_prompt, user_prompt)
-    except requests.exceptions.ConnectionError as e:
-        print(f"[agent.py] Could not reach Ollama at {OLLAMA_HOST} — is `ollama serve` running? {e}")
-        return _safe_default("agent_error: ollama_unreachable")
+        response = client.chat.completions.create(
+            model=os.environ.get("AGENT_MODEL", "openai/gpt-oss-20b"),
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            tools=[IRRIGATION_TOOL_SCHEMA],
+            tool_choice={"type": "function", "function": {"name": "irrigation_decision"}},
+            temperature=0.1,
+        )
+        tool_call = response.choices[0].message.tool_calls[0]
+        args = json.loads(tool_call.function.arguments)
     except Exception as e:
         print(f"[agent.py] Agent call failed: {e}")
         return _safe_default(f"agent_error: {e}")
@@ -274,12 +285,9 @@ def decide_irrigation(telemetry: dict, history: list | None = None) -> dict:
 
 
 # ============================================================
-# QUICK LOCAL TEST — run `python agent.py` to sanity check
-# (requires `ollama serve` running and the model pulled, e.g.
-#  `ollama pull llama3.2:3b`)
+# QUICK LOCAL TEST — run `python agent.py` to sanity check without the API
 # ============================================================
 if __name__ == "__main__":
-    print(f"Using Ollama model '{OLLAMA_MODEL}' at {OLLAMA_HOST}")
     print("Testing decide_irrigation() with dry soil + no forced weather...")
     test_telemetry = {"soil_moisture_pct": 22, "temperature_c": 33, "humidity_pct": 35}
     result = decide_irrigation(test_telemetry, history=[])
