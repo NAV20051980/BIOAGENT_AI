@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BioAgent AI — Plant Camera</title>
+<style>
+  body { font-family: system-ui, -apple-system, sans-serif; background: #0d1f12; color: #f5e9dc; text-align: center; padding: 2rem; }
+  h1 { color: #a3e635; margin-bottom: 0.5rem; }
+  p.subtitle { color: #86efac; margin-top: 0; margin-bottom: 1.5rem; }
+  video, canvas { border-radius: 12px; max-width: 480px; width: 90vw; background: #000; }
+  #snapshotCanvas { display: none; }
+  button { font-size: 1rem; font-weight: bold; padding: 0.7rem 1.4rem; margin: 0.5rem; border: none; border-radius: 8px; cursor: pointer; transition: 0.2s; }
+  #captureBtn { background: #22c55e; color: #052e16; }
+  #captureBtn:hover { background: #16a34a; }
+  #uploadBtn { background: #38bdf8; color: #082f49; }
+  #fileInput { display: none; }
+  #result { margin-top: 1.5rem; text-align: left; max-width: 480px; margin-left: auto; margin-right: auto;
+            background: #12331a; border: 1px solid #1e4d2b; padding: 1rem; border-radius: 10px; white-space: pre-wrap; font-family: ui-monospace, monospace; }
+  label { display: block; margin-top: 1rem; font-size: 0.9rem; }
+  input[type=text] { padding: 0.4rem; border-radius: 6px; border: 1px solid #335533; background: #0b190f; color: #fff; width: 220px; text-align: center; }
+  .btn-group { margin-top: 1rem; }
+</style>
+</head>
+<body>
+  <h1>🌿 BioAgent AI — Identify My Plant</h1>
+  <p class="subtitle">Computer Vision Plant Species Identification & Profile Activation</p>
+
+  <label>
+    Backend URL:
+    <input type="text" id="backendUrl" value="http://localhost:8000">
+  </label>
+
+  <div style="margin-top: 1rem;">
+    <video id="video" autoplay playsinline></video>
+  </div>
+
+  <canvas id="snapshotCanvas"></canvas>
+
+  <div class="btn-group">
+    <button id="captureBtn">📸 Capture & Identify</button>
+    <button id="uploadBtn" onclick="document.getElementById('fileInput').click()">📁 Choose File</button>
+    <input type="file" id="fileInput" accept="image/*">
+  </div>
+
+  <div id="result">Point the camera at a plant, or choose an image file, then click "Identify".</div>
+
+<script>
+const video = document.getElementById('video');
+const canvas = document.getElementById('snapshotCanvas');
+const captureBtn = document.getElementById('captureBtn');
+const fileInput = document.getElementById('fileInput');
+const resultBox = document.getElementById('result');
+const backendUrlInput = document.getElementById('backendUrl');
+
+navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+  .then(stream => { video.srcObject = stream; })
+  .catch(err => {
+    resultBox.textContent = "Camera access unavailable or not granted: " + err.message +
+      "\nYou can still use 'Choose File' to upload an image.";
+  });
+
+async function sendImageBlob(blob) {
+  resultBox.textContent = "Uploading image and running MobileNetV3 inference...";
+  const formData = new FormData();
+  formData.append('file', blob, 'plant.jpg');
+
+  const url = backendUrlInput.value.replace(/\/$/, '') + '/identify-plant';
+
+  try {
+    const resp = await fetch(url, { method: 'POST', body: formData });
+    if (!resp.ok) throw new Error('Server responded with HTTP ' + resp.status);
+    const data = await resp.json();
+    resultBox.textContent = JSON.stringify(data, null, 2);
+  } catch (err) {
+    resultBox.textContent = "Error: " + err.message +
+      "\nEnsure backend is running at " + url;
+  }
+}
+
+captureBtn.addEventListener('click', () => {
+  if (!video.videoWidth) {
+    resultBox.textContent = "Camera stream not active. Please use 'Choose File' instead.";
+    return;
+  }
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  const ctx = canvas.getContext('2d');
+  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+  canvas.toBlob(sendImageBlob, 'image/jpeg', 0.9);
+});
+
+fileInput.addEventListener('change', (e) => {
+  const file = e.target.files[0];
+  if (file) {
+    sendImageBlob(file);
+  }
+});
+</script>
+</body>
+</html>

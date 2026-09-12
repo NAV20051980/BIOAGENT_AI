@@ -13,13 +13,30 @@ Run with:
 import time
 import sqlite3
 from contextlib import contextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, UploadFile, File
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from agent import decide_irrigation, get_weather_forecast, force_weather_scenario
+from agent import (
+    decide_irrigation,
+    get_weather_forecast,
+    force_weather_scenario,
+    set_plant_profile,
+    get_plant_profile,
+)
+from plant_id import identify_plant_from_bytes
 
 DB_PATH = "bioagent.db"
 app = FastAPI(title="BioAgent AI Backend")
+
+# Enable CORS for dashboard and plant camera UI
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # ============================================================
@@ -119,6 +136,43 @@ class DemoScenario(BaseModel):
 # ============================================================
 # ENDPOINTS
 # ============================================================
+@app.get("/")
+def root():
+    return {
+        "project": "BioAgent AI",
+        "status": "running",
+        "endpoints": [
+            "/telemetry (POST)",
+            "/latest-decision",
+            "/history",
+            "/weather",
+            "/status",
+            "/demo/weather-scenario (POST)",
+            "/identify-plant (POST, image upload)",
+            "/plant-profile",
+            "/docs",
+        ],
+    }
+
+
+@app.post("/identify-plant")
+async def identify_plant(file: UploadFile = File(...)):
+    """Upload a photo of the plant once during onboarding. Runs a local
+    image classifier (MobileNetV3), maps the result to a watering-care profile,
+    and sets it as the active profile the Groq reasoning agent uses.
+    """
+    image_bytes = await file.read()
+    result = identify_plant_from_bytes(image_bytes)
+    set_plant_profile(result.get("profile"))
+    return result
+
+
+@app.get("/plant-profile")
+def plant_profile():
+    """Returns the plant profile currently being used by the agent's reasoning."""
+    return get_plant_profile()
+
+
 @app.post("/telemetry")
 def receive_telemetry(telemetry: Telemetry):
     history = rows_to_history_shape(get_recent_decisions(limit=5))

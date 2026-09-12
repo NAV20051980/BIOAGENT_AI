@@ -38,12 +38,30 @@ LON = float(os.environ.get("BIOAGENT_LON", "77.5946"))
 
 MAX_PUMP_RUNTIME_SEC = 30  # must match the firmware's hard cap — don't drift from this
 
-PLANT_PROFILE = {
+DEFAULT_PLANT_PROFILE = {
     "species": "Monstera Deliciosa",
     "growth_stage": "active vegetative growth",
     "ideal_moisture_range_pct": [40, 65],
     "notes": "Prefers evenly moist soil; sensitive to both drought stress and root rot from overwatering.",
 }
+_plant_profile = dict(DEFAULT_PLANT_PROFILE)
+PLANT_PROFILE = _plant_profile  # backward compatibility alias
+
+
+def set_plant_profile(profile: dict | None):
+    """Update the active plant profile used by the Groq reasoning agent.
+    Merges with DEFAULT_PLANT_PROFILE so all expected fields remain present.
+    """
+    global _plant_profile
+    merged = dict(DEFAULT_PLANT_PROFILE)
+    if profile:
+        merged.update(profile)
+    _plant_profile = merged
+
+
+def get_plant_profile() -> dict:
+    """Return the active plant profile."""
+    return _plant_profile
 
 client = OpenAI(
     api_key=GROQ_API_KEY,
@@ -139,8 +157,9 @@ IRRIGATION_TOOL_SCHEMA = {
 
 
 def _build_prompts(telemetry: dict, weather: dict, history: list) -> tuple[str, str]:
+    profile = get_plant_profile()
     system_prompt = f"""You are BioAgent AI, an irrigation reasoning agent for a real physical pump.
-Plant profile: {json.dumps(PLANT_PROFILE)}
+Plant profile: {json.dumps(profile)}
 Recent watering history (most recent last): {json.dumps(history[-5:])}
 
 Rules:
