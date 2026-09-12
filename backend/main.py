@@ -16,6 +16,8 @@ from contextlib import contextmanager
 from fastapi import FastAPI, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from dotenv import load_dotenv
+load_dotenv()
 
 from agent import (
     decide_irrigation,
