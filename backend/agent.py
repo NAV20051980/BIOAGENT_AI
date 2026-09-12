@@ -158,16 +158,55 @@ IRRIGATION_TOOL_SCHEMA = {
 
 def _build_prompts(telemetry: dict, weather: dict, history: list) -> tuple[str, str]:
     profile = get_plant_profile()
-    system_prompt = f"""You are BioAgent AI, an irrigation reasoning agent for a real physical pump.
-Plant profile: {json.dumps(profile)}
-Recent watering history (most recent last): {json.dumps(history[-5:])}
+    moisture_range = profile.get("ideal_moisture_range_pct", [40, 60])
+    min_moisture = moisture_range[0] if len(moisture_range) > 0 else 40
+    max_moisture = moisture_range[1] if len(moisture_range) > 1 else 60
 
-Rules:
-- Weigh soil moisture against the plant's ideal range, NOT a generic threshold.
-- If rain probability is high (e.g. >50%) or significant rain is expected in the next 24h, prefer withholding or reducing irrigation, even if soil is on the dry side — unless moisture is critically low (more than 15 points below the ideal range).
-- Avoid watering again too soon after a recent watering event (check history).
-- Always call the irrigation_decision function. Never respond with plain text.
-- duration_sec must never exceed {MAX_PUMP_RUNTIME_SEC}.
+    # Format history human-readably for the LLM
+    formatted_history = []
+    now = time.time()
+    for h in (history or [])[-5:]:
+        ts = h.get("timestamp")
+        min_ago = round((now - ts) / 60.0, 1) if isinstance(ts, (int, float)) else None
+        formatted_history.append({
+            "minutes_ago": min_ago,
+            "soil_moisture_pct": h.get("soil_moisture_pct"),
+            "watered": h.get("decision", {}).get("trigger_pump", False),
+            "duration_sec": h.get("decision", {}).get("duration_sec", 0),
+        })
+
+    system_prompt = f"""You are BioAgent AI, an edge-IoT smart agriculture reasoning agent controlling a physical water pump relay.
+Active Plant Profile: {json.dumps(profile)}
+Recent telemetry history (most recent last): {json.dumps(formatted_history)}
+
+Follow this strict 5-step Decision Hierarchy:
+
+1. Safety & Physical Constraints:
+   - duration_sec must be an integer between 0 and {MAX_PUMP_RUNTIME_SEC} seconds.
+   - If trigger_pump is false, duration_sec MUST be 0.
+   - If trigger_pump is true, duration_sec MUST be between 5 and {MAX_PUMP_RUNTIME_SEC} seconds.
+   - Watering History: If water was triggered in the immediate prior cycle (< 10 minutes ago) and soil moisture is recovering, avoid rapid double-watering. If soil remains dry and no rain is imminent, proceed with irrigation.
+
+2. Soil Moisture vs. Plant Profile:
+   - Compare current soil moisture ({telemetry.get('soil_moisture_pct')}%) against the plant's ideal range ({min_moisture}% - {max_moisture}%).
+   - OPTIMAL / WET (moisture >= {min_moisture}%): DO NOT WATER (trigger_pump=false, duration_sec=0).
+   - MODERATELY DRY (within 15 percentage points below {min_moisture}%): Soil is dry, but natural rainfall can easily resolve it.
+   - CRITICALLY DRY (>15 percentage points below {min_moisture}%): Plant is under acute water stress.
+
+3. Rain Forecast Integration (24h Precipitation):
+   - High Rain Probability (>= 50% or expected rainfall >= 2.0 mm):
+     * If soil is Moderately Dry: WITHHOLD WATER (trigger_pump=false, duration_sec=0) because upcoming natural rainfall is expected soon and will hydrate the soil without wasting water.
+     * If soil is Critically Dry: Prefer withholding if significant rain (>= 2.0 mm) is imminent, OR supply a brief emergency irrigation (10-15s) only if expected rainfall is negligible (< 1.0 mm) and insufficient to relieve acute stress.
+   - Low Rain Probability (< 50% and expected rainfall < 2.0 mm):
+     * If soil is Dry (moisture < {min_moisture}%): WATER (trigger_pump=true, duration_sec=10-30s scaled to deficit).
+
+4. Explanation & Transparency (reason field):
+   - Always state the current soil moisture relative to the plant's ideal range ({min_moisture}% - {max_moisture}%).
+   - Explicitly cite the rain probability ({weather.get('max_rain_probability_pct')}%) and expected rainfall ({weather.get('expected_rain_mm_24h')} mm).
+   - Clearly explain whether water is applied, withheld for rain, or overridden for emergency critical dryness.
+
+5. Function Call Requirement:
+   - Always call the irrigation_decision function. Never respond with plain text.
 """
 
     user_prompt = f"""Current sensor readings:
@@ -206,6 +245,7 @@ def decide_irrigation(telemetry: dict, history: list | None = None) -> dict:
             ],
             tools=[IRRIGATION_TOOL_SCHEMA],
             tool_choice={"type": "function", "function": {"name": "irrigation_decision"}},
+            temperature=0.1,
         )
         tool_call = response.choices[0].message.tool_calls[0]
         args = json.loads(tool_call.function.arguments)
@@ -225,7 +265,9 @@ def decide_irrigation(telemetry: dict, history: list | None = None) -> dict:
         print(f"[agent.py] Malformed agent output — bad types: {e}")
         return _safe_default("malformed_output_bad_types")
 
-    if duration < 0 or duration > MAX_PUMP_RUNTIME_SEC:
+    if not trigger:
+        duration = 0
+    elif duration < 0 or duration > MAX_PUMP_RUNTIME_SEC:
         print(f"[agent.py] duration_sec {duration} out of range — clamping.")
         duration = max(0, min(duration, MAX_PUMP_RUNTIME_SEC))
 
