@@ -10,8 +10,7 @@ bioagent/
 │   └── bioagent_firmware.ino     ← ESP32 Arduino code
 ├── backend/
 │   ├── main.py                   ← FastAPI + LLM agent
-│   ├── requirements.txt
-│   └── .env.example
+│   └── requirements.txt
 └── BUILD_GUIDE.md                ← this file
 ```
 
@@ -75,11 +74,11 @@ bioagent/
    source venv/bin/activate       # Windows: venv\Scripts\activate
    pip install -r requirements.txt
    ```
-2. Copy `.env.example` to `.env` and fill in your real keys:
+2. Export your API keys and configuration in your environment:
    ```bash
-   cp .env.example .env
+   export GROQ_API_KEY="gsk_..."
+   export OPENWEATHER_API_KEY="..."
    ```
-   Then either `export` these vars in your shell, or use a tool like `python-dotenv` (add `from dotenv import load_dotenv; load_dotenv()` at the top of `main.py` if you want auto-loading — install with `pip install python-dotenv`).
 3. Update `PLANT_PROFILE` in `main.py` to match whatever plant you're actually demoing with.
 4. Update `BIOAGENT_LAT` / `BIOAGENT_LON` to your venue's coordinates for accurate forecasts.
 5. Run it:
