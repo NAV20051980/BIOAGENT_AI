@@ -2,41 +2,43 @@
 
 /*
   ============================================================
-  BioAgent AI — ESP32 Firmware
+  BioAgent AI — ESP32 Smart Irrigation Firmware
   Team stdIO.H — INFERENTIA Hackathon
   ============================================================
 
-  HARDWARE
+  SYSTEM
   ------------------------------------------------------------
   ESP32 WROOM-32
-
-  Soil Moisture Sensor -> GPIO 34
-  DHT11                -> GPIO 18
-  Relay IN             -> GPIO 33
-  Relay                -> ACTIVE LOW
-  Pump                 -> External 3xAAA battery supply
-
-  SOFTWARE FLOW
-  ------------------------------------------------------------
-  ESP32
-      |
-      | WiFi
-      v
+      ↓ Wi-Fi
   FastAPI Backend
-      |
-      | AI decision
-      v
+      ↓
+  AI Irrigation Agent
+      ↓
+  Deterministic Safety Validation
+      ↓
   ESP32
-      |
-      v
-  Relay -> Pump
+      ↓
+  Relay
+      ↓
+  Water Pump
+
+  HARDWARE
+  ------------------------------------------------------------
+  Soil Moisture Sensor → GPIO 34
+  DHT11                → GPIO 18
+  Relay IN             → GPIO 33
+  Relay Logic          → ACTIVE LOW
+  Pump Power           → External 3×AAA battery supply
 
   SAFETY
   ------------------------------------------------------------
-  Maximum pump runtime = 30 seconds
-  Backend failure       = local fail-safe
-  Invalid JSON          = command rejected
-  Invalid duration      = clamped to safe limit
+  • Maximum AI pump runtime: 30 seconds
+  • Backend failure: local fail-safe
+  • Invalid soil reading: hardware safety lockout
+  • Invalid JSON: command rejected
+  • Invalid duration: clamped to 30 seconds
+  • AI/failsafe watering protected by cooldowns
+  • Relay defaults to OFF
   ============================================================
 */
 
@@ -45,14 +47,17 @@
 #include <ArduinoJson.h>
 #include <DFRobot_DHT11.h>
 
+
 // ============================================================
-// OFFLINE TELEMETRY BUFFERING
+// OFFLINE TELEMETRY BUFFER
 // ============================================================
+
 #define MAX_BUFFER_SIZE 360
 #define FLUSH_CHUNK_SIZE 25
 #define DEBUG_BUFFER 1
 
-struct TelemetryData {
+struct TelemetryData
+{
   unsigned long sampleMillis;
   int moisture;
   float temperature;
@@ -60,12 +65,13 @@ struct TelemetryData {
 };
 
 TelemetryData telemetryBuffer[MAX_BUFFER_SIZE];
+
 int bufferStart = 0;
 int bufferCount = 0;
 
 
 // ============================================================
-// WIFI
+// WIFI CONFIGURATION
 // ============================================================
 
 const char* WIFI_SSID = "OnePlus Nord CE4 Lite 5G";
@@ -76,13 +82,15 @@ const char* WIFI_PASSWORD = "navaneet10";
 // FASTAPI BACKEND
 // ============================================================
 
-// MacBook IP obtained from your ifconfig output
+// IMPORTANT:
+// The FastAPI endpoint is /telemetry.
+
 const char* BACKEND_URL =
-  "http://10.162.3.74:8000/user-telemetry";
+  "http://10.162.3.74:8000/telemetry";
 
 
 // ============================================================
-// HARDWARE PINS
+// HARDWARE PIN CONFIGURATION
 // ============================================================
 
 #define SOIL_PIN   34
@@ -94,10 +102,13 @@ const char* BACKEND_URL =
 // TIMING
 // ============================================================
 
-// 30 seconds for hackathon demonstration
+// Telemetry interval.
+// 30 seconds is suitable for hackathon demonstration.
+
 const unsigned long POLL_INTERVAL_MS = 30000;
 
-// Backend timeout
+// Maximum time to wait for backend response.
+
 const unsigned long HTTP_TIMEOUT_MS = 8000;
 
 
@@ -105,76 +116,65 @@ const unsigned long HTTP_TIMEOUT_MS = 8000;
 // SAFETY LIMITS
 // ============================================================
 
-// Absolute maximum pump runtime
+// Absolute maximum pump runtime.
+
 const int MAX_PUMP_RUNTIME_SEC = 30;
 
-// Local fail-safe
+
+// ------------------------------------------------------------
+// LOCAL FAIL-SAFE
+// ------------------------------------------------------------
+
 const int FAILSAFE_MOISTURE_PCT = 18;
 const int FAILSAFE_DURATION_SEC = 4;
-const unsigned long FAILSAFE_COOLDOWN_MS = 600000UL; // 10 minutes
+
+// 10-minute failsafe cooldown.
+
+const unsigned long FAILSAFE_COOLDOWN_MS = 600000UL;
+
 unsigned long lastFailsafeWaterMs = 0;
 
+// ----------------------------------------------------------
+// OPERATION MODE
+// ----------------------------------------------------------
+enum OperatingMode {
+  MODE_AI,
+  MODE_DEMO
+};
+OperatingMode currentMode = MODE_AI;
+
+// Demo timer variables
+unsigned long demoStartMs = 0;
+const unsigned long DEMO_DURATION_MS = 5000; // 5 seconds
+bool demoActive = false;
+
 
 // ============================================================
-// SOIL CALIBRATION
+// SOIL SENSOR CALIBRATION
 // ============================================================
 
-// Current calibration values
-// These were previously measured with your sensor.
-// Recalibrate later if required.
+// Existing calibration values.
 
 const int SOIL_DRY = 2480;
 const int SOIL_WET = 790;
 
-// 3000 is a conservative estimated air/removal threshold and should be recalibrated with measured sensor values after the demo.
+
+// Safety threshold for detecting a potentially removed/
+// invalid sensor reading.
+//
+// IMPORTANT:
+// This value is currently set to 2400 based on the present
+// calibration and should be recalibrated later using a real
+// air/removal reading.
+
 #define SOIL_MAX_AIR_RAW 2400
 
 
 // ============================================================
-// DHT11 OBJECT
+// DHT11
 // ============================================================
 
 DFRobot_DHT11 dht11;
-
-
-// ============================================================
-// SETUP
-// ============================================================
-
-void setup()
-{
-  Serial.begin(115200);
-
-  // Relay output
-  pinMode(RELAY_PIN, OUTPUT);
-
-  // ACTIVE LOW RELAY
-  // HIGH = OFF
-  digitalWrite(RELAY_PIN, HIGH);
-
-  delay(1000);
-
-  Serial.println();
-  Serial.println("================================================");
-  Serial.println("              BioAgent AI");
-  Serial.println("              Team stdIO.H");
-  Serial.println("================================================");
-
-  Serial.println();
-  Serial.println("Hardware:");
-  Serial.println("Soil Sensor : GPIO 34");
-  Serial.println("DHT11       : GPIO 18");
-  Serial.println("Relay       : GPIO 33");
-  Serial.println("Relay Logic : ACTIVE LOW");
-
-  Serial.println();
-  Serial.println("Backend:");
-  Serial.println(BACKEND_URL);
-
-  Serial.println();
-
-  connectWiFi();
-}
 
 
 // ============================================================
@@ -187,7 +187,11 @@ void connectWiFi()
   Serial.println("Connecting to phone hotspot...");
 
   WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  WiFi.begin(
+    WIFI_SSID,
+    WIFI_PASSWORD
+  );
 
   int attempts = 0;
 
@@ -220,14 +224,14 @@ void connectWiFi()
     Serial.println("WiFi connection FAILED.");
 
     Serial.println(
-      "The ESP32 will use local fail-safe logic."
+      "Local fail-safe will be used."
     );
   }
 }
 
 
 // ============================================================
-// SOIL MOISTURE
+// SOIL MOISTURE READING
 // ============================================================
 
 int readSoilMoisturePercent()
@@ -237,18 +241,38 @@ int readSoilMoisturePercent()
   Serial.print("Soil Raw: ");
   Serial.println(raw);
 
-  // 3000 is a conservative estimated air/removal threshold and should be recalibrated with measured sensor values after the demo.
+
+  // ----------------------------------------------------------
+  // SENSOR VALIDATION
+  // ----------------------------------------------------------
+
   if (raw > SOIL_MAX_AIR_RAW)
   {
-    // Immediately force relay OFF (ACTIVE LOW: HIGH = OFF)
-    digitalWrite(RELAY_PIN, HIGH);
+    // ACTIVE LOW relay:
+    // HIGH = OFF
 
-    Serial.println("SOIL SENSOR INVALID - SAFETY LOCKOUT");
-    Serial.print("RAW ADC = ");
+    digitalWrite(
+      RELAY_PIN,
+      HIGH
+    );
+
+    Serial.println(
+      "SOIL SENSOR INVALID - SAFETY LOCKOUT"
+    );
+
+    Serial.print(
+      "RAW ADC = "
+    );
+
     Serial.println(raw);
 
     return -1;
   }
+
+
+  // ----------------------------------------------------------
+  // CONVERT RAW ADC TO MOISTURE %
+  // ----------------------------------------------------------
 
   int moisture = map(
     raw,
@@ -264,9 +288,17 @@ int readSoilMoisturePercent()
     100
   );
 
-  Serial.print("Soil Moisture: ");
-  Serial.print(moisture);
+
+  Serial.print(
+    "Soil Moisture: "
+  );
+
+  Serial.print(
+    moisture
+  );
+
   Serial.println("%");
+
 
   return moisture;
 }
@@ -278,12 +310,16 @@ int readSoilMoisturePercent()
 
 void runPump(int durationSec)
 {
+  // ----------------------------------------------------------
   // HARD SAFETY LIMIT
+  // ----------------------------------------------------------
+
   int safeDuration = constrain(
     durationSec,
     0,
     MAX_PUMP_RUNTIME_SEC
   );
+
 
   if (safeDuration <= 0)
   {
@@ -294,102 +330,278 @@ void runPump(int durationSec)
     return;
   }
 
+
   Serial.println();
   Serial.println("--------------------------------");
 
-  Serial.print("PUMP ON");
-  Serial.print(" | Requested: ");
-  Serial.print(durationSec);
-  Serial.print(" sec");
-  Serial.print(" | Safe: ");
-  Serial.print(safeDuration);
-  Serial.println(" sec");
+  Serial.print(
+    "PUMP ON"
+  );
 
+  Serial.print(
+    " | Requested: "
+  );
+
+  Serial.print(
+    durationSec
+  );
+
+  Serial.print(
+    " sec"
+  );
+
+  Serial.print(
+    " | Safe: "
+  );
+
+  Serial.print(
+    safeDuration
+  );
+
+  Serial.println(
+    " sec"
+  );
+
+
+  // ----------------------------------------------------------
+  // RELAY ON
   // ACTIVE LOW
-  // LOW = relay ON
-  digitalWrite(RELAY_PIN, LOW);
+  // LOW = ON
+  // ----------------------------------------------------------
+
+  digitalWrite(
+    RELAY_PIN,
+    LOW
+  );
+
 
   delay(
     safeDuration * 1000UL
   );
 
-  // HIGH = relay OFF
-  digitalWrite(RELAY_PIN, HIGH);
 
-  Serial.println("PUMP OFF");
+  // ----------------------------------------------------------
+  // RELAY OFF
+  // HIGH = OFF
+  // ----------------------------------------------------------
 
-  Serial.println("--------------------------------");
+  digitalWrite(
+    RELAY_PIN,
+    HIGH
+  );
+
+  Serial.println(
+    "PUMP OFF"
+  );
+
+  Serial.println(
+    "--------------------------------"
+  );
 }
 
+
 // ============================================================
-// TELEMETRY BUFFER HELPERS
+// TELEMETRY BUFFER
 // ============================================================
-void bufferTelemetry(int m, float t, float h) {
+
+void bufferTelemetry(
+  int m,
+  float t,
+  float h
+)
+{
   unsigned long now = millis();
-  int idx = (bufferStart + bufferCount) % MAX_BUFFER_SIZE;
-  telemetryBuffer[idx].sampleMillis = now;
-  telemetryBuffer[idx].moisture = m;
-  telemetryBuffer[idx].temperature = t;
-  telemetryBuffer[idx].humidity = h;
-  if (bufferCount < MAX_BUFFER_SIZE) {
+
+  int idx =
+    (bufferStart + bufferCount)
+    % MAX_BUFFER_SIZE;
+
+
+  telemetryBuffer[idx].sampleMillis =
+    now;
+
+  telemetryBuffer[idx].moisture =
+    m;
+
+  telemetryBuffer[idx].temperature =
+    t;
+
+  telemetryBuffer[idx].humidity =
+    h;
+
+
+  if (
+    bufferCount < MAX_BUFFER_SIZE
+  )
+  {
     bufferCount++;
-  } else {
-    // Buffer full, overwrite oldest entry
-    bufferStart = (bufferStart + 1) % MAX_BUFFER_SIZE;
   }
+  else
+  {
+    // Buffer full:
+    // overwrite oldest entry.
+
+    bufferStart =
+      (bufferStart + 1)
+      % MAX_BUFFER_SIZE;
+  }
+
+
 #if DEBUG_BUFFER
-  Serial.print("Buffered telemetry (count=");
-  Serial.print(bufferCount);
-  Serial.println(")");
+
+  Serial.print(
+    "Buffered telemetry (count="
+  );
+
+  Serial.print(
+    bufferCount
+  );
+
+  Serial.println(
+    ")"
+  );
+
 #endif
 }
 
-void flushTelemetryBuffer() {
-  while (bufferCount > 0) {
-    int chunkSize = min(bufferCount, FLUSH_CHUNK_SIZE);
-    StaticJsonDocument<1024> batchDoc;
-    JsonArray arr = batchDoc.to<JsonArray>();
-    for (int i = 0; i < chunkSize; i++) {
-      int idx = (bufferStart + i) % MAX_BUFFER_SIZE;
-      JsonObject obj = arr.createNestedObject();
-      unsigned long ageMs = millis() - telemetryBuffer[idx].sampleMillis;
-      obj["age_seconds"] = ageMs / 1000;
-      obj["soil_moisture_pct"] = telemetryBuffer[idx].moisture;
-      obj["temperature_c"] = telemetryBuffer[idx].temperature;
-      obj["humidity_pct"] = telemetryBuffer[idx].humidity;
-      obj["device_id"] = "esp32-01";
+
+// ============================================================
+// FLUSH OFFLINE TELEMETRY
+// ============================================================
+
+void flushTelemetryBuffer()
+{
+  while (bufferCount > 0)
+  {
+    int chunkSize =
+      min(
+        bufferCount,
+        FLUSH_CHUNK_SIZE
+      );
+
+
+    StaticJsonDocument<1024>
+      batchDoc;
+
+    JsonArray arr =
+      batchDoc.to<JsonArray>();
+
+
+    for (
+      int i = 0;
+      i < chunkSize;
+      i++
+    )
+    {
+      int idx =
+        (bufferStart + i)
+        % MAX_BUFFER_SIZE;
+
+
+      JsonObject obj =
+        arr.createNestedObject();
+
+
+      unsigned long ageMs =
+        millis()
+        - telemetryBuffer[idx].sampleMillis;
+
+
+      obj["age_seconds"] =
+        ageMs / 1000;
+
+      obj["soil_moisture_pct"] =
+        telemetryBuffer[idx].moisture;
+
+      obj["temperature_c"] =
+        telemetryBuffer[idx].temperature;
+
+      obj["humidity_pct"] =
+        telemetryBuffer[idx].humidity;
+
+      obj["device_id"] =
+        "esp32-01";
     }
 
+
     String payload;
-    serializeJson(batchDoc, payload);
+
+    serializeJson(
+      batchDoc,
+      payload
+    );
+
 
     HTTPClient http;
-    http.setTimeout(HTTP_TIMEOUT_MS);
-    http.begin(BACKEND_URL);
-    http.addHeader("Content-Type", "application/json");
-    int httpCode = http.POST(payload);
+
+    http.setTimeout(
+      HTTP_TIMEOUT_MS
+    );
+
+    http.begin(
+      BACKEND_URL
+    );
+
+    http.addHeader(
+      "Content-Type",
+      "application/json"
+    );
+
+
+    int httpCode =
+      http.POST(payload);
+
+
     http.end();
 
-    if (httpCode == 200) {
-      // Successful flush, remove sent items from buffer
-      bufferStart = (bufferStart + chunkSize) % MAX_BUFFER_SIZE;
-      bufferCount -= chunkSize;
+
+    if (httpCode == 200)
+    {
+      bufferStart =
+        (bufferStart + chunkSize)
+        % MAX_BUFFER_SIZE;
+
+      bufferCount -=
+        chunkSize;
+
+
 #if DEBUG_BUFFER
-      Serial.print("Flushed ");
-      Serial.print(chunkSize);
-      Serial.println(" telemetry entries");
+
+      Serial.print(
+        "Flushed "
+      );
+
+      Serial.print(
+        chunkSize
+      );
+
+      Serial.println(
+        " telemetry entries"
+      );
+
 #endif
-    } else {
+    }
+    else
+    {
 #if DEBUG_BUFFER
-      Serial.print("Failed to flush telemetry, HTTP code: ");
-      Serial.println(httpCode);
+
+      Serial.print(
+        "Failed to flush telemetry, HTTP code: "
+      );
+
+      Serial.println(
+        httpCode
+      );
+
 #endif
-      // Abort flushing to retry later
+
+      // Stop flushing.
+      // Retry during a later cycle.
+
       break;
     }
   }
 }
-
 
 
 // ============================================================
@@ -404,13 +616,26 @@ bool callBackend(
   int &durationSec
 )
 {
-  if (WiFi.status() != WL_CONNECTED)
+  // ----------------------------------------------------------
+  // WIFI CHECK
+  // ----------------------------------------------------------
+
+  if (
+    WiFi.status() != WL_CONNECTED
+  )
   {
     Serial.println(
       "WiFi not connected. Buffering telemetry."
     );
-    // Buffer the current reading for later transmission
-    bufferTelemetry(moisturePct, tempC, humidity);
+
+
+    bufferTelemetry(
+      moisturePct,
+      tempC,
+      humidity
+    );
+
+
     return false;
   }
 
@@ -421,9 +646,11 @@ bool callBackend(
     HTTP_TIMEOUT_MS
   );
 
+
   http.begin(
     BACKEND_URL
   );
+
 
   http.addHeader(
     "Content-Type",
@@ -432,10 +659,12 @@ bool callBackend(
 
 
   // ----------------------------------------------------------
-  // CREATE JSON
+  // CREATE TELEMETRY JSON
   // ----------------------------------------------------------
 
-  StaticJsonDocument<256> requestDoc;
+  StaticJsonDocument<256>
+    requestDoc;
+
 
   requestDoc["soil_moisture_pct"] =
     moisturePct;
@@ -469,7 +698,7 @@ bool callBackend(
 
 
   // ----------------------------------------------------------
-  // POST
+  // SEND POST REQUEST
   // ----------------------------------------------------------
 
   int httpCode =
@@ -486,6 +715,7 @@ bool callBackend(
       httpCode
     );
 
+
     Serial.print(
       "HTTP error: "
     );
@@ -496,6 +726,7 @@ bool callBackend(
       )
     );
 
+
     http.end();
 
     return false;
@@ -503,11 +734,12 @@ bool callBackend(
 
 
   // ----------------------------------------------------------
-  // RESPONSE
+  // READ BACKEND RESPONSE
   // ----------------------------------------------------------
 
   String response =
     http.getString();
+
 
   http.end();
 
@@ -526,7 +758,9 @@ bool callBackend(
   // PARSE JSON
   // ----------------------------------------------------------
 
-  StaticJsonDocument<256> responseDoc;
+  StaticJsonDocument<256>
+    responseDoc;
+
 
   DeserializationError error =
     deserializeJson(
@@ -550,7 +784,7 @@ bool callBackend(
 
 
   // ----------------------------------------------------------
-  // STRICT VALIDATION
+  // STRICT RESPONSE VALIDATION
   // ----------------------------------------------------------
 
   if (
@@ -575,7 +809,10 @@ bool callBackend(
   }
 
 
-  // Read backend decision
+  // ----------------------------------------------------------
+  // READ AI DECISION
+  // ----------------------------------------------------------
+
   pumpOn =
     responseDoc[
       "trigger_pump"
@@ -589,7 +826,7 @@ bool callBackend(
 
 
   // ----------------------------------------------------------
-  // SAFETY LIMIT
+  // HARD DURATION VALIDATION
   // ----------------------------------------------------------
 
   if (
@@ -605,6 +842,7 @@ bool callBackend(
       "Applying 30-second HARD LIMIT."
     );
 
+
     durationSec =
       constrain(
         durationSec,
@@ -615,19 +853,25 @@ bool callBackend(
 
 
   // ----------------------------------------------------------
-  // DISPLAY DECISION
+  // DISPLAY AI DECISION
   // ----------------------------------------------------------
 
   Serial.println();
-  Serial.println("AI DECISION:");
+  Serial.println(
+    "AI DECISION:"
+  );
+
 
   Serial.print(
     "Trigger Pump: "
   );
 
   Serial.println(
-    pumpOn ? "YES" : "NO"
+    pumpOn
+      ? "YES"
+      : "NO"
   );
+
 
   Serial.print(
     "Duration: "
@@ -642,15 +886,24 @@ bool callBackend(
   );
 
 
-  // Optional reason from backend
-  if (responseDoc.containsKey("reason"))
+  // ----------------------------------------------------------
+  // DISPLAY AI REASON
+  // ----------------------------------------------------------
+
+  if (
+    responseDoc.containsKey(
+      "reason"
+    )
+  )
   {
     Serial.print(
       "Reason: "
     );
 
     Serial.println(
-      responseDoc["reason"].as<const char*>()
+      responseDoc[
+        "reason"
+      ].as<const char*>()
     );
   }
 
@@ -681,6 +934,10 @@ void runFailsafe(
   );
 
 
+  // ----------------------------------------------------------
+  // DRY SOIL
+  // ----------------------------------------------------------
+
   if (
     moisturePct <
     FAILSAFE_MOISTURE_PCT
@@ -690,43 +947,89 @@ void runFailsafe(
       "Soil is DRY."
     );
 
-    unsigned long now = millis();
 
-    // Check if 10-minute cooldown has elapsed since last failsafe watering
-    if (lastFailsafeWaterMs != 0 && (now - lastFailsafeWaterMs < FAILSAFE_COOLDOWN_MS))
+    unsigned long now =
+      millis();
+
+
+    // --------------------------------------------------------
+    // FAIL-SAFE COOLDOWN
+    // --------------------------------------------------------
+
+    if (
+      lastFailsafeWaterMs != 0
+      &&
+      (
+        now
+        - lastFailsafeWaterMs
+        <
+        FAILSAFE_COOLDOWN_MS
+      )
+    )
     {
-      // Force relay OFF (ACTIVE LOW: HIGH = OFF)
-      digitalWrite(RELAY_PIN, HIGH);
+      // Force pump OFF.
+
+      digitalWrite(
+        RELAY_PIN,
+        HIGH
+      );
+
 
       Serial.println(
         "[FAILSAFE] Cooldown active - pump locked."
       );
 
+
       Serial.print(
         "Cooldown remaining: "
       );
 
+
       Serial.print(
-        (FAILSAFE_COOLDOWN_MS - (now - lastFailsafeWaterMs)) / 1000UL
+        (
+          FAILSAFE_COOLDOWN_MS
+          -
+          (
+            now
+            - lastFailsafeWaterMs
+          )
+        )
+        / 1000UL
       );
+
 
       Serial.println(
         " sec"
       );
     }
+
+
+    // --------------------------------------------------------
+    // FAIL-SAFE WATERING
+    // --------------------------------------------------------
+
     else
     {
       Serial.println(
         "Running 4-second fail-safe watering."
       );
 
-      lastFailsafeWaterMs = now;
+
+      lastFailsafeWaterMs =
+        now;
+
 
       runPump(
         FAILSAFE_DURATION_SEC
       );
     }
   }
+
+
+  // ----------------------------------------------------------
+  // SOIL MOISTURE SUFFICIENT
+  // ----------------------------------------------------------
+
   else
   {
     Serial.println(
@@ -742,6 +1045,103 @@ void runFailsafe(
   Serial.println(
     "================================"
   );
+}
+
+
+// ============================================================
+// SETUP
+// ============================================================
+
+void setup()
+{
+  Serial.begin(
+    115200
+  );
+
+
+  // ----------------------------------------------------------
+  // RELAY INITIALIZATION
+  // ----------------------------------------------------------
+
+  pinMode(
+    RELAY_PIN,
+    OUTPUT
+  );
+
+
+  // ACTIVE LOW:
+  // HIGH = Pump OFF
+
+  digitalWrite(
+    RELAY_PIN,
+    HIGH
+  );
+
+
+  delay(1000);
+
+
+  // ----------------------------------------------------------
+  // STARTUP INFORMATION
+  // ----------------------------------------------------------
+
+  Serial.println();
+
+  Serial.println(
+    "================================================"
+  );
+
+  Serial.println(
+    "              BioAgent AI"
+  );
+
+  Serial.println(
+    "              Team stdIO.H"
+  );
+
+  Serial.println(
+    "================================================"
+  );
+
+
+  Serial.println();
+
+  Serial.println(
+    "Hardware:"
+  );
+
+  Serial.println(
+    "Soil Sensor : GPIO 34"
+  );
+
+  Serial.println(
+    "DHT11       : GPIO 18"
+  );
+
+  Serial.println(
+    "Relay       : GPIO 33"
+  );
+
+  Serial.println(
+    "Relay Logic : ACTIVE LOW"
+  );
+
+
+  Serial.println();
+
+  Serial.println(
+    "Backend:"
+  );
+
+  Serial.println(
+    BACKEND_URL
+  );
+
+
+  Serial.println();
+
+
+  connectWiFi();
 }
 
 
@@ -763,12 +1163,71 @@ void loop()
   )
   {
     Serial.println();
+
     Serial.println(
       "WiFi disconnected."
     );
 
+
     connectWiFi();
-  }
+  } // end WiFi check
+
+    // ----------------------------------------------------------
+    // SERIAL COMMAND HANDLING
+    // ----------------------------------------------------------
+    if (Serial.available() > 0) {
+      String cmd = Serial.readStringUntil('\n');
+      cmd.trim();
+      cmd.toUpperCase();
+
+      if (cmd == "D") {
+        if (!demoActive) {
+          currentMode = MODE_DEMO;
+          demoActive = true;
+          demoStartMs = millis();
+          Serial.println("================================");
+          Serial.println("BIOAGENT AI — DEMO MODE");
+          Serial.println("================================");
+          Serial.println("Physical pump demonstration");
+          Serial.println("Pump duration: 5 seconds");
+          Serial.println("Relay: ON");
+          Serial.println("Pump: ON");
+          Serial.println("================================");
+          digitalWrite(RELAY_PIN, LOW); // Relay ON => pump ON
+        }
+      } else if (cmd == "AI") {
+        currentMode = MODE_AI;
+        Serial.println("================================");
+        Serial.println("BIOAGENT AI — AI MODE");
+        Serial.println("================================");
+        Serial.println("Backend AI control restored.");
+        Serial.println("================================");
+      } else if (cmd == "STATUS") {
+        Serial.print("Mode: ");
+        Serial.println(currentMode == MODE_AI ? "AI" : "DEMO");
+        Serial.print("Pump: ");
+        Serial.println(digitalRead(RELAY_PIN) == LOW ? "ON" : "OFF");
+        Serial.print("Relay: ");
+        Serial.println(digitalRead(RELAY_PIN) == LOW ? "LOW (ON)" : "HIGH (OFF)");
+        Serial.print("Backend: ");
+        Serial.println(WiFi.status() == WL_CONNECTED ? "Connected" : "Disconnected");
+      } else if (cmd == "OFF") {
+        demoActive = false;
+        digitalWrite(RELAY_PIN, HIGH);
+        Serial.println("EMERGENCY MANUAL OFF");
+        Serial.println("Pump: OFF");
+      }
+    }
+
+    // Demo timer check
+    if (demoActive && (millis() - demoStartMs >= DEMO_DURATION_MS)) {
+      digitalWrite(RELAY_PIN, HIGH);
+      demoActive = false;
+      Serial.println("Pump: OFF");
+      Serial.println("Demo complete.");
+      Serial.println("================================");
+  
+
 
 
   // ----------------------------------------------------------
@@ -776,10 +1235,7 @@ void loop()
   // ----------------------------------------------------------
 
   if (
-    millis() - lastPoll >=
-      POLL_INTERVAL_MS
-    ||
-    lastPoll == 0
+    ( (millis() - lastPoll >= POLL_INTERVAL_MS) || (lastPoll == 0) ) && !demoActive
   )
   {
     lastPoll =
@@ -788,6 +1244,7 @@ void loop()
 
     Serial.println();
     Serial.println();
+
     Serial.println(
       "================================================"
     );
@@ -802,15 +1259,22 @@ void loop()
 
 
     // --------------------------------------------------------
-    // SOIL
+    // SOIL SENSOR
     // --------------------------------------------------------
 
     int moisturePct =
       readSoilMoisturePercent();
 
-    if (moisturePct < 0)
+
+    // Invalid sensor reading.
+    // Do not continue with DHT or backend request.
+
+    if (
+      moisturePct < 0
+    )
     {
       Serial.println();
+
       Serial.println(
         "Waiting 30 seconds for next cycle..."
       );
@@ -819,12 +1283,13 @@ void loop()
         "================================================"
       );
 
+
       return;
     }
 
 
     // --------------------------------------------------------
-    // DHT11
+    // DHT11 SENSOR
     // --------------------------------------------------------
 
     dht11.read(
@@ -834,6 +1299,7 @@ void loop()
 
     float tempC =
       dht11.temperature;
+
 
     float humidity =
       dht11.humidity;
@@ -866,13 +1332,16 @@ void loop()
 
 
     // --------------------------------------------------------
-    // DHT VALIDATION
+    // DHT11 VALIDATION
     // --------------------------------------------------------
 
     if (
-      tempC < -40 ||
-      tempC > 80 ||
-      humidity < 0 ||
+      tempC < -40
+      ||
+      tempC > 80
+      ||
+      humidity < 0
+      ||
       humidity > 100
     )
     {
@@ -884,13 +1353,15 @@ void loop()
         "Using fallback values."
       );
 
+
       tempC = 25.0;
+
       humidity = 50.0;
     }
 
 
     // --------------------------------------------------------
-    // BACKEND / AI
+    // BACKEND / AI REQUEST
     // --------------------------------------------------------
 
     bool pumpOn = false;
@@ -912,19 +1383,25 @@ void loop()
     // BACKEND SUCCESS
     // --------------------------------------------------------
 
-    if (backendOK)
+    if (
+      backendOK
+    )
     {
       Serial.println();
+
       Serial.println(
         "Backend responded successfully."
       );
 
 
-      if (pumpOn)
+      if (
+        pumpOn
+      )
       {
         Serial.println(
           "AI DECISION: WATER"
         );
+
 
         runPump(
           durationSec
@@ -935,6 +1412,7 @@ void loop()
         Serial.println(
           "AI DECISION: DO NOT WATER"
         );
+
 
         Serial.println(
           "Pump remains OFF."
@@ -950,9 +1428,11 @@ void loop()
     else
     {
       Serial.println();
+
       Serial.println(
         "Backend unavailable."
       );
+
 
       runFailsafe(
         moisturePct
@@ -960,7 +1440,12 @@ void loop()
     }
 
 
+    // --------------------------------------------------------
+    // WAIT FOR NEXT CYCLE
+    // --------------------------------------------------------
+
     Serial.println();
+
     Serial.println(
       "Waiting 30 seconds for next cycle..."
     );
