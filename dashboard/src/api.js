@@ -3,7 +3,7 @@
  * Centralized API client for communicating with the FastAPI backend.
  */
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
+const API_BASE_URL = import.meta.env.VITE_BACKEND_URL || import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
 
 /**
  * Returns active authentication token from localStorage
@@ -117,10 +117,32 @@ export async function activatePump(payload = {}) {
 /**
  * Plant Identification via Image Upload
  */
-export async function identifyPlant(file) {
+export async function identifyPlant(file, plantId = null) {
   const formData = new FormData();
   formData.append('file', file);
+  formData.append('image', file);
+  if (plantId) {
+    const cleanId = String(plantId).replace('plant-', '');
+    formData.append('plant_id', cleanId);
+  }
   return await request('/identify-plant', {
+    method: 'POST',
+    body: formData,
+  });
+}
+
+/**
+ * Plant Health Specimen Visual Diagnostics
+ */
+export async function uploadPlantHealthImage(file, plantId = null) {
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('image', file);
+  if (plantId) {
+    const cleanId = String(plantId).replace('plant-', '');
+    formData.append('plant_id', cleanId);
+  }
+  return await request('/plant-health/upload', {
     method: 'POST',
     body: formData,
   });

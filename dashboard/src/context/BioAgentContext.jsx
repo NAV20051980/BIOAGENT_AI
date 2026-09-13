@@ -42,6 +42,15 @@ export function buildActivePlant(profile) {
     ? profile.ideal_moisture_range_pct[1]
     : (profile.ideal_moisture_max ?? profile.idealMoistureMax ?? 65);
 
+  const plantImage =
+    profile.imageUrl ||
+    profile.image_url ||
+    profile.image ||
+    profile.photo_url ||
+    (profile.id ? localStorage.getItem(`bioagent_plant_image_${profile.id}`) : null) ||
+    localStorage.getItem('bioagent_plant_image_active') ||
+    null;
+
   return {
     id: matched?.id || `plant-${profile.id || 'active'}`,
     name: profile.species,
@@ -56,6 +65,9 @@ export function buildActivePlant(profile) {
     humidityPreference: matched?.humidityPreference || { min: 40, max: 70 },
     illustration: matched?.illustration || { shape: 'broadleaf', color: 'botanical' },
     confidence: profile.confidence,
+    imageUrl: plantImage,
+    image_url: plantImage,
+    image: plantImage,
     notes: profile.notes || profile.wateringNotes || '',
     rawProfile: profile,
   };

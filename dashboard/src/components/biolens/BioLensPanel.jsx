@@ -18,18 +18,25 @@ export default function BioLensPanel() {
     const file = e.target.files?.[0];
     if (!file) return;
 
+    if (file.size > 5 * 1024 * 1024 || !file.type.startsWith('image/')) {
+      setError('Unable to analyze image. Please upload a clear JPG/PNG under 5MB.');
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      return;
+    }
+
     // 1. Show immediate preview in the viewfinder
     const reader = new FileReader();
     reader.onload = () => {
-      setUploadedImage(reader.result);
+      const dataUrl = reader.result;
+      setUploadedImage(dataUrl);
+      localStorage.setItem('bioagent_plant_image_active', dataUrl);
+      // 2. Submit to backend /identify-plant with image preview
+      identifyUploadedFile(file, dataUrl);
     };
     reader.readAsDataURL(file);
-
-    // 2. Submit to backend /identify-plant
-    identifyUploadedFile(file);
   };
 
-  const identifyUploadedFile = async (file) => {
+  const identifyUploadedFile = async (file, imagePreviewUrl) => {
     setUploading(true);
     setError(null);
     setResult(null);
@@ -45,6 +52,7 @@ export default function BioLensPanel() {
       const idealMax = res.profile?.ideal_moisture_range_pct?.[1] ?? res.ideal_moisture_max ?? 60;
 
       const identifiedPlant = {
+        id: res.id ? `plant-${res.id}` : 'plant-active',
         name: species,
         species: species,
         scientificName: scientificName,
@@ -56,9 +64,19 @@ export default function BioLensPanel() {
         ideal_moisture_max: idealMax,
         growthStage: 'Vegetative Growth',
         week: 1,
+        imageUrl: imagePreviewUrl,
+        image_url: imagePreviewUrl,
+        image: imagePreviewUrl,
         illustration: { shape: 'broadleaf', color: 'botanical' },
         description: `Active specimen calibrated for autonomous Groq AI irrigation.`,
       };
+
+      if (imagePreviewUrl) {
+        localStorage.setItem('bioagent_plant_image_active', imagePreviewUrl);
+        if (identifiedPlant.id) {
+          localStorage.setItem(`bioagent_plant_image_${identifiedPlant.id}`, imagePreviewUrl);
+        }
+      }
 
       // Auto-select as active plant across context, Dashboard, and Inventory
       if (setActivePlant) {
@@ -78,7 +96,11 @@ export default function BioLensPanel() {
       });
     } catch (err) {
       console.error('Plant identification error:', err);
-      setError(err.message || 'Plant identification failed. Please try another image.');
+      const userMsg =
+        err.message && (err.message.includes('422') || err.message.includes('400') || err.message.includes('413'))
+          ? 'Unable to analyze image. Please upload a clear JPG/PNG under 5MB.'
+          : err.message || 'Unable to analyze image. Please upload a clear JPG/PNG under 5MB.';
+      setError(userMsg);
     } finally {
       setUploading(false);
       if (fileInputRef.current) fileInputRef.current.value = '';

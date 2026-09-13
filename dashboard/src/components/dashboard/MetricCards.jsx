@@ -4,7 +4,7 @@ import { useBioAgent } from '../../context/BioAgentContext.jsx';
 
 const MetricCard = ({ title, value, icon: Icon, statusColor, subtext }) => {
   return (
-    <div className="panel metric-card" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.5rem 0.85rem', height: 'auto', minHeight: 'unset' }}>
+    <div className="panel metric-card" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '14px 16px', width: '100%', minHeight: '90px' }}>
       <div 
         className="metric-card__icon" 
         style={{

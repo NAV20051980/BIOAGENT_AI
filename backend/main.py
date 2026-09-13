@@ -12,17 +12,17 @@ Run with:
 
 import os
 import time
-import datetime
 import sqlite3
 from contextlib import contextmanager
 import bcrypt
 from jose import jwt as jose_jwt, JWTError
 
-from fastapi import FastAPI, UploadFile, File, HTTPException, status as http_status, Depends
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, status as http_status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from typing import List, Union
+from typing import List, Union, Optional
 from pydantic import BaseModel, EmailStr
+from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -75,7 +75,7 @@ def verify_password(plain_password: str, hashed_password: str) -> bool:
 def create_access_token(data: dict, expires_delta_hours: int = JWT_EXPIRES_HOURS) -> str:
     """Generate signed JWT token."""
     to_encode = data.copy()
-    expire = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=expires_delta_hours)
+    expire = datetime.now(timezone.utc) + timedelta(hours=expires_delta_hours)
     to_encode.update({"exp": expire})
     return jose_jwt.encode(to_encode, JWT_SECRET, algorithm=JWT_ALGORITHM)
 
@@ -389,6 +389,26 @@ class PumpActivateRequest(BaseModel):
     reason: str = "Manual pump activation requested via dashboard"
     plant_id: int | None = None
     soil_moisture: int | None = None
+
+class PlantHealthComponents(BaseModel):
+    moisture: float
+    temperature: float
+    humidity: float
+    watering: float
+
+class PlantHealthResponse(BaseModel):
+    health_score: float
+    trend: str
+    components: PlantHealthComponents
+class WaterSavingsResponse(BaseModel):
+    water_saved_liters: float
+    percentage_saved: float
+    cost_saved_inr: float
+    co2_saved_kg: float
+    co2_equivalent_km: float
+    period_days: int
+    manual_estimate_liters: float
+    actual_usage_liters: float
 
 
 # ============================================================
@@ -793,15 +813,37 @@ def store_user_telemetry(
 
 
 @app.post("/identify-plant")
+@app.post("/api/identify-plant")
 async def identify_plant(
-    file: UploadFile = File(...),
+    file: UploadFile | None = File(None),
+    image: UploadFile | None = File(None),
+    plant_id: Optional[str] = Form(None),
     credentials: HTTPAuthorizationCredentials | None = Depends(security),
 ):
-    """Upload a photo of the plant once during onboarding. Runs Groq Vision
+    """Upload a photo of the plant once during onboarding or diagnosis. Runs Groq Vision
     (qwen/qwen3.8-27b) for botanical plant identification, sets the resulting
     care profile as the active profile, and returns the identification details.
     """
-    image_bytes = await file.read()
+    upload = file or image
+    if not upload:
+        raise HTTPException(
+            status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Unable to analyze image. Please upload a clear JPG/PNG under 5MB.",
+        )
+
+    image_bytes = await upload.read()
+    if not image_bytes or len(image_bytes) == 0:
+        raise HTTPException(
+            status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Unable to analyze image. Please upload a clear JPG/PNG under 5MB.",
+        )
+
+    if len(image_bytes) > 5 * 1024 * 1024:
+        raise HTTPException(
+            status_code=http_status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Unable to analyze image. Please upload a clear JPG/PNG under 5MB.",
+        )
+
     result = identify_plant_from_bytes(image_bytes)
     if result.get("profile_activated") is True:
         profile = result.get("profile") or {}
@@ -1005,3 +1047,155 @@ def set_demo_weather(payload: DemoScenario):
         "forced_scenario": raw_dict.get("scenario") or "custom",
         "active_weather": active,
     }
+
+@app.get("/plant-health/{plant_id}", response_model=PlantHealthResponse)
+@app.get("/api/plant-health/{plant_id}", response_model=PlantHealthResponse)
+async def get_plant_health(plant_id: str, current_user: dict = Depends(get_current_user)):
+    """Get plant health score (0-100%) with trend and component breakdown.
+    Accepts integer IDs, prefixed IDs (e.g. 'plant-1'), or species strings.
+    """
+    user_id = current_user['user_id']
+
+    numeric_id = None
+    if str(plant_id).isdigit():
+        numeric_id = int(plant_id)
+    elif str(plant_id).startswith("plant-") and str(plant_id).replace("plant-", "").isdigit():
+        numeric_id = int(str(plant_id).replace("plant-", ""))
+
+    with get_db() as conn:
+        plant_row = None
+        if numeric_id is not None:
+            plant_row = conn.execute(
+                "SELECT * FROM plants WHERE id = ? AND user_id = ?",
+                (numeric_id, user_id),
+            ).fetchone()
+
+        if not plant_row:
+            clean_name = str(plant_id).replace("plant-", "").replace("-", " ")
+            plant_row = conn.execute(
+                "SELECT * FROM plants WHERE (species LIKE ? OR scientific_name LIKE ?) AND user_id = ?",
+                (f"%{clean_name}%", f"%{clean_name}%", user_id),
+            ).fetchone()
+
+        if not plant_row:
+            plant_row = conn.execute(
+                "SELECT * FROM plants WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+                (user_id,),
+            ).fetchone()
+
+        latest_telemetry = conn.execute(
+            "SELECT soil_moisture, temperature, humidity FROM telemetry WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+            (user_id,),
+        ).fetchone()
+
+        history_rows = conn.execute(
+            "SELECT decision FROM irrigation_history WHERE user_id = ? ORDER BY id DESC LIMIT 20",
+            (user_id,),
+        ).fetchall()
+
+    if not plant_row:
+        plant_dict = {'ideal_moisture_min': 40, 'ideal_moisture_max': 60}
+    else:
+        plant_dict = {
+            'ideal_moisture_min': plant_row['ideal_moisture_min'],
+            'ideal_moisture_max': plant_row['ideal_moisture_max']
+        }
+
+    if not latest_telemetry:
+        telemetry_dict = {'soil_moisture': 50, 'temperature': 24.0, 'humidity': 50.0}
+    else:
+        telemetry_dict = {
+            'soil_moisture': latest_telemetry['soil_moisture'],
+            'temperature': latest_telemetry['temperature'],
+            'humidity': latest_telemetry['humidity']
+        }
+
+    history_list = [dict(r) for r in history_rows] if history_rows else []
+    from agent import calculate_plant_health_score
+    health = calculate_plant_health_score(plant_dict, telemetry_dict, history_list)
+    return PlantHealthResponse(
+        health_score=health['health_score'],
+        trend=health['trend'],
+        components=PlantHealthComponents(**health['components'])
+    )
+
+
+@app.post("/plant-health/upload")
+@app.post("/api/plant-health/upload")
+@app.post("/plant-health/analyze")
+@app.post("/api/plant-health/analyze")
+async def upload_plant_health_image(
+    file: UploadFile | None = File(None),
+    image: UploadFile | None = File(None),
+    plant_id: Optional[str] = Form(None),
+    current_user: dict = Depends(get_current_user),
+):
+    """Upload specimen photo for visual health analysis."""
+    upload = file or image
+    if not upload:
+        raise HTTPException(
+            status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Unable to analyze image. Please upload a clear JPG/PNG under 5MB.",
+        )
+
+    image_bytes = await upload.read()
+    if not image_bytes or len(image_bytes) == 0:
+        raise HTTPException(
+            status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Unable to analyze image. Please upload a clear JPG/PNG under 5MB.",
+        )
+
+    if len(image_bytes) > 5 * 1024 * 1024:
+        raise HTTPException(
+            status_code=http_status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Unable to analyze image. Please upload a clear JPG/PNG under 5MB.",
+        )
+
+    result = identify_plant_from_bytes(image_bytes)
+    user_id = current_user['user_id']
+    from agent import calculate_plant_health_score
+
+    ideal_min = result.get("profile", {}).get("ideal_moisture_range_pct", [40, 60])[0]
+    ideal_max = result.get("profile", {}).get("ideal_moisture_range_pct", [40, 60])[1]
+    plant_dict = {
+        'ideal_moisture_min': ideal_min,
+        'ideal_moisture_max': ideal_max,
+    }
+
+    with get_db() as conn:
+        latest_telemetry = conn.execute(
+            "SELECT soil_moisture, temperature, humidity FROM telemetry WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+            (user_id,),
+        ).fetchone()
+
+        history_rows = conn.execute(
+            "SELECT decision FROM irrigation_history WHERE user_id = ? ORDER BY id DESC LIMIT 20",
+            (user_id,),
+        ).fetchall()
+
+    telemetry_dict = {
+        'soil_moisture': latest_telemetry['soil_moisture'] if latest_telemetry else 50,
+        'temperature': latest_telemetry['temperature'] if latest_telemetry else 24.0,
+        'humidity': latest_telemetry['humidity'] if latest_telemetry else 50.0,
+    }
+    history_list = [dict(r) for r in history_rows] if history_rows else []
+    health = calculate_plant_health_score(plant_dict, telemetry_dict, history_list)
+
+    return {
+        "status": "success",
+        "identification": result,
+        "health_score": health['health_score'],
+        "trend": health['trend'],
+        "components": health['components'],
+    }
+
+@app.get("/water-savings", response_model=WaterSavingsResponse)
+@app.get("/api/water-savings", response_model=WaterSavingsResponse)
+async def get_water_savings(days: int = 30, current_user: dict = Depends(get_current_user)):
+    """Get water‑savings metrics for the logged‑in user."""
+    from agent import calculate_water_savings
+    with get_db() as conn:
+        savings = calculate_water_savings(current_user['user_id'], conn, days)
+    return WaterSavingsResponse(**savings)
+
+

@@ -62,7 +62,7 @@ export default function PlantHistoryPanel({ plant, telemetry, decision, history 
         </p>
       </div>
 
-      <ul className="history-panel__timeline">
+      <div className="history-panel__scrollable"><ul className="history-panel__timeline">
         {history.map((entry) => {
           const Icon = EVENT_ICONS[entry.type]
           return (
@@ -92,7 +92,7 @@ export default function PlantHistoryPanel({ plant, telemetry, decision, history 
             </li>
           )
         })}
-      </ul>
+      </ul></div>
 
       {history.length === 0 ? (
         <p className="history-panel__empty">No recorded history yet for {plant.name}.</p>

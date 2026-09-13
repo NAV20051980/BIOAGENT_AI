@@ -1,20 +1,23 @@
 import { useState, useMemo } from 'react';
 import { useBioAgent } from '../context/BioAgentContext.jsx';
 import MetricCards from '../components/dashboard/MetricCards.jsx';
-import DemoWeatherControls from '../components/DemoWeatherControls.jsx';
+import PlantHealthScore from '../components/dashboard/PlantHealthScore';
+import WaterSavingsCard from '../components/dashboard/WaterSavingsCard.jsx';
 import CentralPlantSystem from '../components/central-hero/CentralPlantSystem.jsx';
 import InventoryPanel from '../components/inventory/InventoryPanel.jsx';
 import GrowingAnalysisPanel from '../components/analysis/GrowingAnalysisPanel.jsx';
 import DigitalTwinPanel from '../components/digital-twin/DigitalTwinPanel.jsx';
 import PlantHistoryPanel from '../components/history/PlantHistoryPanel.jsx';
 import MoistureChart from '../components/MoistureChart.jsx';
-import Panel from '../components/common/Panel.jsx';
+import MoistureSparkline from '../components/charts/MoistureSparkline.jsx';
 import { DEFAULT_PLANT_ID, getPlantById, plants } from '../data/plants.js';
 import { getTelemetryByPlantId } from '../data/telemetry.js';
 import { currentWeather } from '../data/weather.js';
 import { computeIrrigationDecision } from '../data/decisions.js';
 import { getHistoryByPlantId } from '../data/history.js';
 import './Dashboard.css';
+
+const KPICards = MetricCards;
 
 export default function Dashboard() {
   const {
@@ -65,76 +68,140 @@ export default function Dashboard() {
   }, [telemetryHistory, sessionHistory, currentMoisture]);
 
   return (
-    <div className="dashboard-frame">
-      <div className="dashboard-frame__inner">
-        {/* 1. TOP: KPI & Status Summary Cards */}
-        <MetricCards
-          moisture={currentMoisture}
-          idealMin={idealMin}
-          idealMax={idealMax}
-          pumpActive={decision?.trigger_pump || decision?.decision === 'WATER'}
-        />
+    <div style={{
+      background: 'linear-gradient(160deg, #e8d5a3 0%, #f0e4c4 50%, #e4d09a 100%)',
+      minHeight: '100vh',
+      padding: '20px'
+    }}>
+      <div style={{ maxWidth: '1600px', margin: '0 auto' }}>
 
-        {/* Demo Weather Simulation Controls */}
-        <DemoWeatherControls />
+        {/* ROW 1: KPI CARDS (4 columns full width) */}
+        <div className="w-full grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+          <KPICards />
+        </div>
 
-        {/* 2. MIDDLE: 3-Column Macro Grid */}
-        <div className="dashboard-grid">
-          {/* Left: CentralPlantSystem (Plant card with Bael) + InventoryPanel */}
-          <div className="dashboard-col">
-            <CentralPlantSystem
-              plant={selectedPlant}
-              telemetry={telemetry}
-              weather={weather}
-              decision={decision}
-            />
+        {/* ROW 2: HEALTH SCORE + WATER SAVINGS (2 columns) */}
+        {activePlant && (
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '20px' }}>
+            <div style={{ minHeight: '300px' }}>
+              <PlantHealthScore plantId={activePlant.id} activePlant={activePlant} />
+            </div>
+            <div style={{ minHeight: '300px' }}>
+              <WaterSavingsCard />
+            </div>
+          </div>
+        )}
+
+        {/* ROW 3: MAIN CONTENT (Inventory + Analysis + Digital Twin) */}
+        <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr 320px', gap: '16px', marginBottom: '20px' }}>
+
+          {/* LEFT: Inventory Panel */}
+          <div style={{
+            background: '#f9f6f0',
+            border: '1px solid #d4b87a',
+            borderRadius: '12px',
+            padding: '16px',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+            height: 'fit-content'
+          }}>
             <InventoryPanel
               selectedPlantId={selectedPlantId}
               onSelectPlant={setSelectedPlantId}
             />
           </div>
 
-          {/* Center: GrowingAnalysisPanel (Telemetry + AI Decision + Pump + MoistureSparkline) */}
-          <div className="dashboard-col dashboard-col--center">
+          {/* CENTER: Growing Analysis + Moisture Sparkline */}
+          <div style={{
+            background: '#f9f6f0',
+            border: '1px solid #d4b87a',
+            borderRadius: '12px',
+            padding: '16px',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '16px'
+          }}>
             <GrowingAnalysisPanel
               plant={selectedPlant}
               telemetry={telemetry}
               weather={weather}
               decision={decision}
             />
+            {activePlant && (
+              <MoistureSparkline
+                plantId={activePlant.id}
+                currentMoisture={currentMoisture}
+                idealMin={idealMin}
+                idealMax={idealMax}
+              />
+            )}
           </div>
 
-          {/* Right: DigitalTwinPanel (Plant health visualization) */}
-          <div className="dashboard-col dashboard-col--right">
-            <Panel className="digital-twin-card-container">
-              <DigitalTwinPanel
-                plant={selectedPlant}
-                telemetry={telemetry}
-              />
-            </Panel>
+          {/* RIGHT: Digital Twin */}
+          <div style={{
+            background: '#f9f6f0',
+            border: '1px solid #d4b87a',
+            borderRadius: '12px',
+            padding: '16px',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
+          }}>
+            <DigitalTwinPanel
+              plant={selectedPlant}
+              telemetry={telemetry}
+            />
           </div>
         </div>
 
-        {/* 3. BOTTOM: PlantHistoryPanel */}
-        <Panel className="dashboard-history-card dashboard-bottom">
-          <PlantHistoryPanel
-            plant={selectedPlant}
-            telemetry={telemetry}
-            decision={decision}
-            history={history}
-          />
-        </Panel>
+        {/* ROW 4: HISTORY + MOISTURE CHART (2 columns) */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '20px' }}>
+          <div style={{
+            background: '#f9f6f0',
+            border: '1px solid #d4b87a',
+            borderRadius: '12px',
+            padding: '16px',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+            minHeight: '300px'
+          }}>
+            <PlantHistoryPanel
+              plant={selectedPlant}
+              telemetry={telemetry}
+              decision={decision}
+              history={history}
+            />
+          </div>
+          <div style={{
+            background: '#f9f6f0',
+            border: '1px solid #d4b87a',
+            borderRadius: '12px',
+            padding: '16px',
+            boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+            minHeight: '300px'
+          }}>
+            <MoistureChart
+              data={moistureHistoryData}
+              history={history}
+              plant={selectedPlant}
+              currentMoisture={currentMoisture}
+              idealMin={idealMin}
+              idealMax={idealMax}
+            />
+          </div>
+        </div>
 
-        {/* 4. BOTTOM: MoistureChart (Full width, 6-hour history) */}
-        <MoistureChart
-          data={moistureHistoryData}
-          history={history}
-          plant={selectedPlant}
-          currentMoisture={currentMoisture}
-          idealMin={idealMin}
-          idealMax={idealMax}
-        />
+        {/* FOOTER */}
+        <div style={{
+          textAlign: 'center',
+          padding: '20px',
+          fontSize: '12px',
+          color: '#a07848',
+          borderTop: '1px solid #d4b87a'
+        }}>
+          <p>BioAgent AI · Autonomous Irrigation System · INFERENTIA HACKATHON 2026</p>
+          <p>Team stdIO.H · Real-time monitoring with 5s polling</p>
+        </div>
+
       </div>
     </div>
   );
 }
+

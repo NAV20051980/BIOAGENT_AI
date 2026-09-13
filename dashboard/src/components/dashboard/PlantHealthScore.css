@@ -1,0 +1,356 @@
+/* PlantHealthScore.css — Modern, Clean, Cohesive Botanical Theme */
+
+.plant-health-card {
+  background: #f9f6f0;
+  border: 1px solid #d4b87a;
+  border-radius: 12px;
+  padding: 18px 20px;
+  box-shadow: 0 1px 4px rgba(45, 31, 14, 0.06);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  height: 100%;
+  box-sizing: border-box;
+  color: #2d1f0e;
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.plant-health-card:hover {
+  box-shadow: 0 3px 12px rgba(45, 31, 14, 0.09);
+  border-color: #c9a75e;
+}
+
+/* Loading & Error States */
+.plant-health-card--state {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 280px;
+  text-align: center;
+}
+
+.plant-health-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid #ebdcc0;
+  border-top-color: #5a8a3a;
+  border-radius: 50%;
+  animation: plantHealthSpin 0.9s linear infinite;
+}
+
+@keyframes plantHealthSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.plant-health-state-text {
+  font-size: 0.88rem;
+  color: #7a6244;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.plant-health-state-icon--warning {
+  color: #d4722a;
+}
+
+/* Header */
+.plant-health-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.plant-health-header__title-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.plant-health-icon-bubble {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: #e8edd8;
+  color: #4a752c;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.plant-health-title {
+  font-size: 0.98rem;
+  font-weight: 700;
+  color: #2d1f0e;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+.plant-health-subtitle {
+  font-size: 0.78rem;
+  color: #8c7355;
+  font-weight: 500;
+  display: block;
+}
+
+.plant-health-scientific {
+  font-style: italic;
+  color: #a0886b;
+}
+
+.plant-health-trend-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 0.76rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+/* Hero Visual Box: Circular Gauge + Image / Fallback */
+.plant-health-hero {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 16px;
+  align-items: center;
+  background: #fffdf8;
+  border: 1px solid #ebdcc0;
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+.plant-health-gauge-box {
+  position: relative;
+  width: 110px;
+  height: 110px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.plant-health-svg-gauge {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+}
+
+.plant-health-gauge-track {
+  fill: none;
+  stroke: #ebdcc0;
+  stroke-width: 8;
+}
+
+.plant-health-gauge-fill {
+  fill: none;
+  stroke-width: 8;
+  stroke-linecap: round;
+  transition: stroke-dasharray 0.8s ease-out, stroke 0.4s ease;
+}
+
+.plant-health-gauge-content {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  pointer-events: none;
+}
+
+.plant-health-gauge-value {
+  font-size: 1.45rem;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.02em;
+}
+
+.plant-health-gauge-pct {
+  font-size: 0.85rem;
+  font-weight: 600;
+  margin-left: 1px;
+}
+
+.plant-health-gauge-label {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-top: 3px;
+}
+
+/* Specimen Attachment Container */
+.plant-health-attachment {
+  height: 100%;
+  min-height: 110px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.plant-health-image-container {
+  position: relative;
+  width: 100%;
+  height: 110px;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid #ebdcc0;
+}
+
+.plant-health-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.plant-health-image-tag {
+  position: absolute;
+  bottom: 6px;
+  right: 6px;
+  background: rgba(45, 31, 14, 0.75);
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  backdrop-filter: blur(4px);
+}
+
+.plant-health-no-image {
+  width: 100%;
+  height: 100%;
+  min-height: 110px;
+  border: 1px dashed #d4b87a;
+  border-radius: 8px;
+  background: #fdfbf7;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+  box-sizing: border-box;
+  text-align: center;
+}
+
+.plant-health-no-image__icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #ebdcc0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 4px;
+}
+
+.plant-health-no-image__title {
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #634e34;
+}
+
+.plant-health-no-image__sub {
+  font-size: 0.68rem;
+  color: #9c8365;
+  margin-top: 1px;
+}
+
+/* Component Breakdown Stats Grid (2x2) */
+.plant-health-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
+
+.plant-health-stat-card {
+  background: #fffdf8;
+  border: 1px solid #ebdcc0;
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-sizing: border-box;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+.plant-health-stat-card:hover {
+  transform: translateY(-1px);
+  border-color: #d4b87a;
+}
+
+.plant-health-stat-card__top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.plant-health-stat-card__icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.plant-health-stat-card__title {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #6d5437;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.plant-health-stat-card__bottom {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.plant-health-stat-card__value {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #2d1f0e;
+  line-height: 1.1;
+}
+
+.plant-health-stat-bar-track {
+  width: 100%;
+  height: 5px;
+  background: #ebdcc0;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.plant-health-stat-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.6s ease;
+}
+
+@media (max-width: 640px) {
+  .plant-health-hero {
+    grid-template-columns: 1fr;
+  }
+  .plant-health-stats-grid {
+    grid-template-columns: 1fr;
+  }
+}
+

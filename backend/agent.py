@@ -432,3 +432,148 @@ if __name__ == "__main__":
     result = decide_irrigation(test_telemetry, history=[])
     print(json.dumps(result, indent=2))
     force_weather_scenario(None)
+def calculate_plant_health_score(plant_data, telemetry_data, history_data):
+    """
+    Calculate health score 0-100% based on:
+    - Soil moisture alignment with ideal range
+    - Temperature condition (safe range 15-30°C, ideal 18-27°C)
+    - Humidity condition (40-70% ideal)
+    - Watering consistency
+    - Recent trend
+    """
+    
+    # Moisture score (0-100)
+    moisture = telemetry_data.get('soil_moisture', 50)
+    ideal_min = plant_data.get('ideal_moisture_min', 30)
+    ideal_max = plant_data.get('ideal_moisture_max', 70)
+    
+    if ideal_min <= moisture <= ideal_max:
+        moisture_score = 100
+    elif moisture < ideal_min:
+        moisture_score = max(0, 100 - (ideal_min - moisture) * 2)
+    else:
+        moisture_score = max(0, 100 - (moisture - ideal_max) * 2)
+    
+    # Temperature score (0-100)
+    temp = telemetry_data.get('temperature', 22)
+    if 18 <= temp <= 27:
+        temp_score = 100
+    elif 15 <= temp <= 30:
+        temp_score = 80
+    else:
+        temp_score = max(0, 100 - abs(temp - 22) * 5)
+    
+    # Humidity score (0-100)
+    humidity = telemetry_data.get('humidity', 55)
+    if 40 <= humidity <= 70:
+        humidity_score = 100
+    else:
+        humidity_score = max(0, 100 - abs(humidity - 55) * 2)
+    
+    # Watering consistency score (0-100)
+    watering_score = 80 if len(history_data) > 0 else 50
+    
+    # Calculate overall score (weighted average)
+    health_score = (
+        (moisture_score * 0.4) +
+        (temp_score * 0.2) +
+        (humidity_score * 0.2) +
+        (watering_score * 0.2)
+    )
+    
+    # Determine trend from last 3 readings
+    trend = "new"
+    if len(history_data) >= 3:
+        recent_scores = []
+        for h in history_data[-3:]:
+            recent_scores.append(health_score)  # simplified: use current score
+        
+        if recent_scores[-1] > recent_scores[0] + 5:
+            trend = "improving"
+        elif recent_scores[-1] < recent_scores[0] - 5:
+            trend = "declining"
+        else:
+            trend = "stable"
+    
+    return {
+        "health_score": round(health_score, 1),
+        "trend": trend,
+        "components": {
+            "moisture": round(moisture_score, 1),
+            "temperature": round(temp_score, 1),
+            "humidity": round(humidity_score, 1),
+            "watering": round(watering_score, 1)
+        }
+    }
+
+def calculate_water_savings(user_id, db=None, days=30):
+    """
+    Calculate water saved vs manual watering estimate.
+    Returns: liters saved, percentage saved, cost saved (₹), CO2 saved (kg)
+    """
+    from datetime import datetime, timedelta
+    
+    # Get irrigation history for the period
+    start_date = datetime.utcnow() - timedelta(days=days)
+    history = []
+    if db is not None:
+        if hasattr(db, "execute"):
+            try:
+                rows = db.execute(
+                    """SELECT * FROM irrigation_history
+                       WHERE user_id = ? AND UPPER(decision) = 'WATER'""",
+                    (user_id,),
+                ).fetchall()
+                history = [dict(r) for r in rows]
+            except Exception:
+                pass
+        elif hasattr(db, "query"):
+            try:
+                history = db.query(IrrigationHistory).filter(
+                    IrrigationHistory.user_id == user_id,
+                    IrrigationHistory.timestamp >= start_date,
+                    IrrigationHistory.decision == 'WATER'
+                ).all()
+            except Exception:
+                pass
+    
+    # Calculate actual water used
+    total_duration_seconds = sum(
+        (h.get('duration_sec', 0) if isinstance(h, dict) else getattr(h, 'duration_sec', 0)) or 0
+        for h in history
+    )
+    total_duration_minutes = total_duration_seconds / 60
+    actual_water_liters = total_duration_minutes * 0.5  # 0.5L per minute pump rate
+    
+    # Estimate manual watering (assumes 3x per week, 5L per watering)
+    manual_waterings_per_month = 12  # 3 per week
+    watering_frequency_days = 30 / manual_waterings_per_month  # ~2.5 days
+    num_periods = days / watering_frequency_days
+    manual_water_liters = num_periods * 5
+    
+    # Calculate savings
+    water_saved = max(0.0, manual_water_liters - actual_water_liters)
+    percentage_saved = (water_saved / manual_water_liters * 100) if manual_water_liters > 0 else 0
+    
+    # Cost calculation (₹5 per 1000L in India - adjust as needed)
+    water_rate_per_liter = 5 / 1000
+    cost_saved = water_saved * water_rate_per_liter
+    
+    # CO2 calculation (0.5kg CO2 per 1000L water treatment + pumping)
+    co2_per_1000l = 0.5
+    co2_saved = (water_saved / 1000) * co2_per_1000l
+    
+    # CO2 equivalent to car driving (0.21kg CO2 per km)
+    co2_per_km = 0.21
+    km_equivalent = co2_saved / co2_per_km if co2_per_km > 0 else 0
+    
+    return {
+        "water_saved_liters": round(water_saved, 1),
+        "percentage_saved": round(percentage_saved, 1),
+        "cost_saved_inr": round(cost_saved, 2),
+        "co2_saved_kg": round(co2_saved, 2),
+        "co2_equivalent_km": round(km_equivalent, 1),
+        "period_days": days,
+        "manual_estimate_liters": round(manual_water_liters, 1),
+        "actual_usage_liters": round(actual_water_liters, 1)
+    }

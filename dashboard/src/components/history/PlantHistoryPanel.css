@@ -226,3 +226,8 @@
   transform: translateY(-2px);
   box-shadow: 0 12px 28px rgba(44, 53, 37, 0.18);
 }
+
+.history-panel__scrollable {
+  max-height: 400px;
+  overflow-y: auto;
+}

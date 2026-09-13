@@ -40,43 +40,63 @@ export function AuthProvider({ children }) {
     }
   }, [token]);
 
+  const [isAuthenticated, setIsAuthenticated] = useState(() => Boolean(localStorage.getItem('auth_token') || localStorage.getItem('bioagent_token')));
+  const [error, setError] = useState(null);
+
   // Validate on mount
   useEffect(() => {
-    let mounted = true;
-    async function checkToken() {
-      const existingToken = localStorage.getItem('auth_token') || localStorage.getItem('bioagent_token');
-      if (!existingToken) {
-        if (mounted) setLoading(false);
+    const verifyStoredToken = async () => {
+      setLoading(true);
+      const storedToken = localStorage.getItem('auth_token') || localStorage.getItem('bioagent_token');
+
+      // If no token, just set unauthenticated and return
+      if (!storedToken) {
+        setIsAuthenticated(false);
+        setLoading(false);
         return;
       }
+
       try {
-        const res = await verifyAuthToken(existingToken);
-        if (mounted && res && res.valid) {
-          setUser((prev) => ({
-            user_id: res.user_id,
-            username: res.username,
-            ...(prev || {}),
-          }));
+        // Try to verify the token
+        const response = await fetch('/api/auth/verify', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${storedToken}`,
+            'Content-Type': 'application/json',
+          },
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          setUser(data);
+          setToken(storedToken);
+          setIsAuthenticated(true);
         } else {
-          throw new Error('Token is not valid');
+          // Token is invalid/expired
+          localStorage.removeItem('auth_token');
+          localStorage.removeItem('bioagent_token');
+          localStorage.removeItem('bioagent_user');
+          setToken(null);
+          setUser(null);
+          setIsAuthenticated(false);
+          setError(null); // Don't show error
         }
-      } catch (err) {
-        console.warn('Auth token invalid or expired on load, resetting session:', err.message);
+      } catch (error) {
+        // Network error or other issue - just log it, don't show "Load failed"
+        console.error('Token verification error:', error);
         localStorage.removeItem('auth_token');
         localStorage.removeItem('bioagent_token');
         localStorage.removeItem('bioagent_user');
-        if (mounted) {
-          setToken(null);
-          setUser(null);
-        }
+        setToken(null);
+        setUser(null);
+        setIsAuthenticated(false);
+        setError(null); // Don't show error
       } finally {
-        if (mounted) setLoading(false);
+        setLoading(false);
       }
-    }
-    checkToken();
-    return () => {
-      mounted = false;
     };
+
+    verifyStoredToken();
   }, []);
 
   const login = useCallback(async (username, password) => {
@@ -91,6 +111,7 @@ export function AuthProvider({ children }) {
       localStorage.setItem('bioagent_user', JSON.stringify(userInfo));
       setToken(res.access_token);
       setUser(userInfo);
+      setIsAuthenticated(true);
     }
     return res;
   }, []);
@@ -110,6 +131,7 @@ export function AuthProvider({ children }) {
       localStorage.setItem('bioagent_user', JSON.stringify(userInfo));
       setToken(loginRes.access_token);
       setUser(userInfo);
+      setIsAuthenticated(true);
     }
     return res;
   }, []);
@@ -120,12 +142,14 @@ export function AuthProvider({ children }) {
     localStorage.removeItem('bioagent_user');
     setToken(null);
     setUser(null);
+    setIsAuthenticated(false);
   }, []);
 
   const value = {
     token,
     user,
     loading,
+    error,
     isAuthenticated: Boolean(token),
     login,
     signup,
